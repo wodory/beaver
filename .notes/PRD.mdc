@@ -1,0 +1,76 @@
+---
+description: 
+globs: 
+alwaysApply: false
+---
+# Product Requirements Document (PRD) – 개발자 생산성 대시보드
+
+## 1. 개요 (Overview)
+- **프로젝트 이름**: **개발자 생산성 대시보드** (Developer Productivity Dashboard)  
+- **목적**: 조직 내 **개발자** 및 **프로젝트**의 생산성을 측정하고, 데이터 기반 인사이트를 통해 **효율성 개선**을 지원하는 대시보드를 개발합니다.  
+- **주요 기능**:  
+  - 개발자 및 프로젝트의 **Pull Request(PR)** 활동 현황 분석  
+  - **코드 리뷰 응답 시간**, **PR 병합 속도** 등의 **주요 생산성 지표 시각화**  
+  - **글로벌 빅테크 및 국내 IT기업**의 벤치마킹 데이터 비교  
+  - **실시간 데이터 갱신** 및 **기간별/프로젝트별 필터링** 지원  
+  - Github API 및 오픈소스 활용한 **데이터 수집 및 분석** 기능  
+
+## 2. 기능 요구 사항 (Functional Requirements)
+- **데이터 수집**: Github API를 통해 **PR, 커밋, 코드 리뷰 데이터**를 자동 수집하고, 프로젝트 메타데이터(팀, 저장소, 태그 등)를 저장 및 관리합니다.  
+- **지표 측정 및 분석**: 수집된 데이터로부터 **PR 개수**, **코드 변경량(LOC)**, **리뷰 응답 시간**, **PR 사이클 타임**(생성~병합 소요 시간), **배포 빈도**, **결함률** 등 핵심 지표를 계산합니다. 각 지표에 대한 공식과 계산 로직을 적용하고, 결과를 해석 가능한 형태로 제공해야 합니다. *(예: PR 병합 시간은 팀 효율성의 지표로 사용됩니다 ([Developer Productivity: Effective Ways to Measure and Strategies to Improve](mdc:https:/techhub.asia/how-to-measure-developer-productivity/#:~:text=,mentoring%2C%20and%20participating%20in%20discussions)))* 또한, **배포 빈도** 등 **DORA** 연구의 핵심 지표를 반영하여 DevOps 성능을 평가합니다 ([Developer Productivity: Effective Ways to Measure and Strategies to Improve](mdc:https:/techhub.asia/how-to-measure-developer-productivity/#:~:text=,team%20release%20code%20into%20production)).  
+- **대시보드 UI/UX**: 대시보드는 **개인별/프로젝트별 PR 활동 요약**과 **지표별 그래프**를 제공합니다. 막대 차트, 선 그래프 등의 시각 요소와 KPI 카드 위젯으로 구성하여 한눈에 성과를 파악할 수 있게 합니다. 기간 선택 및 프로젝트별 **필터 기능**을 제공하여 사용자가 원하는 범위의 데이터를 볼 수 있습니다. UI 구현에는 **shadcn UI 컴포넌트**와 **Tailwind CSS**를 활용하여 일관된 디자인을 적용합니다.  
+- **데이터 갱신 및 성능 최적화**: GitHub의 최신 데이터를 **실시간 동기화**하거나 일정 주기로 업데이트합니다. **Zustand**로 상태를 관리하며 데이터 캐싱을 적용해 불필요한 API 호출을 줄이고 성능을 높입니다. 대시보드 로딩 속도를 위해 필요한 데이터만 선택적으로 요청하고, API Rate Limit에 대비하여 백오프(backoff) 전략을 포함합니다.
+
+## 3. 기술 요구 사항 (Technical Requirements)
+- **프론트엔드**: Vite + React 기반으로 개발하며, 상태 관리는 Zustand를 이용합니다. 스타일링은 Tailwind CSS를 사용하고, UI 구성에는 shadcn 컴포넌트를 활용합니다. 테스트 코드는 Vitest로 작성합니다.  
+- **백엔드**: 별도의 서버 없이 **Github API**와 관련 오픈소스 라이브러리(예: Octokit)를 활용하여 데이터 수집 및 처리를 수행합니다. (초기 버전에서는 클라이언트 사이드 처리 위주)  
+- **데이터베이스**: **없음** (초기 버전에서는 데이터베이스를 사용하지 않고 클라이언트에서 데이터를 처리합니다. 추후 필요한 경우 도입 검토)  
+- **배포**: Vercel 또는 Netlify를 통해 프론트엔드 애플리케이션을 **CI/CD 파이프라인**으로 쉽게 배포할 수 있도록 구성합니다.
+
+## 4. 데이터 요구 사항 (Data Requirements)
+- **수집할 데이터**:  
+  - **PR 정보**: PR 생성 시간, 생성자, 병합 여부와 병합 시각, 리뷰어 및 리뷰 코멘트 내역 등  
+  - **커밋 정보**: PR에 속한 모든 커밋의 변경 라인 수 (추가된 줄, 삭제된 줄)  
+  - **프로젝트 메타데이터**: 프로젝트 식별 정보(레포지토리 이름), 팀/부서명, 프로젝트 태그 등  
+- **지표 계산 방법**:  
+  - **PR 수**: 선택 기간 내 생성된 Pull Request의 총 개수  
+  - **코드 변경량 (LOC)**: 해당 기간 PR들의 모든 커밋에서 추가/삭제된 코드 라인 총합  
+  - **리뷰 응답 시간**: PR 생성 시각부터 **첫 번째 리뷰 코멘트**까지 걸린 시간 (평균 및 중앙값 산출)  
+  - **PR 사이클 타임**: PR 생성부터 최종 **병합 완료**까지 소요된 시간 (평균 및 중앙값 산출)  
+  - **배포 빈도**: 제품 배포(릴리즈) 횟수 또는 main 브랜치에 병합된 PR의 배포 주기 (DORA의 **Deployment Frequency** 지표와 연관) ([Developer Productivity: Effective Ways to Measure and Strategies to Improve](mdc:https:/techhub.asia/how-to-measure-developer-productivity/#:~:text=,team%20release%20code%20into%20production))  
+  - **결함률**: 배포된 변경사항 중 **실패(롤백 또는 장애 발생)**한 비율 (DORA의 **Change Failure Rate** 지표와 연관) ([Developer Productivity: Effective Ways to Measure and Strategies to Improve](mdc:https:/techhub.asia/how-to-measure-developer-productivity/#:~:text=,prepared%20team))  
+
+## 5. UI/UX 요구 사항 (UI/UX Requirements)
+- **레이아웃**: 대시보드의 기본 레이아웃을 정의하고 핵심 지표를 한눈에 볼 수 있도록 **상단에 요약 지표 카드**, **하단에 상세 그래프 영역** 등을 배치합니다.  
+- **필터 및 조회**: 화면 상단에 기간 선택(date range picker), 프로젝트 선택 드롭다운 등의 **필터 UI**를 제공하여 사용자 요청에 따라 대시보드 내용을 갱신합니다. 필터 적용 결과는 즉각적으로 시각화에 반영됩니다.  
+- **차트와 카드**: 각 지표는 가장 효과적으로 전달될 수 있는 **시각화 차트**로 표현합니다 (예: 추이는 선형 그래프, 비교는 막대 그래프). 주요 KPI는 카드 형태로 요약 표시합니다. 이를 통해 사용자들이 **가독성 높게** 데이터를 이해할 수 있도록 합니다.  
+- **반응형 디자인**: 다양한 해상도와 기기에서 사용 가능하도록 **반응형 UI**를 구현합니다. 또한 사용성 향상을 위해 **다크 모드 지원**도 검토합니다.
+
+## 6. 성능 및 확장성 고려 (Performance & Scalability)
+- **API 호출 최적화**: 필요한 데이터만 선별적으로 **REST API 호출**을 수행하여 Rate Limit 초과를 방지합니다. 응답 데이터는 가능한 캐시하여 동일한 요청을 반복하지 않습니다.  
+- **상태 캐싱**: **Zustand**를 이용해 클라이언트 상태와 fetched 데이터를 캐싱함으로써 화면 전환이나 재렌더링 시 불필요한 재요청을 막고 성능을 향상시킵니다.  
+- **실시간 갱신**: 최신 생산성 지표를 확인할 수 있도록 **실시간 데이터 갱신**을 고려합니다. WebSocket 연결 또는 일정 주기의 폴링(polling)으로 데이터를 주기적으로 동기화하여 대시보드를 최신 상태로 유지합니다.  
+- **확장성**: 향후 데이터 증가나 기능 확장에 대비해 코드를 모듈화하고 인터페이스를 추상화합니다. 필요 시 백엔드 서버나 데이터베이스 도입이 용이하도록 구조를 설계해 둡니다.
+
+## 7. 벤치마킹 및 비교 (Benchmark & Comparison)
+- **업계 사례 분석**: Google, Microsoft, LinkedIn 등의 **글로벌 빅테크 기업**과 네이버, 카카오 등의 **국내 IT기업**에서 개발자 생산성을 측정하는 사례를 연구하여 벤치마킹합니다. 이들 기업은 전담 팀을 두어 개발 생산성 지표를 모니터링하고, **단일 지표로 생산성을 판단하지 않는 철학**을 가지고 있습니다 ([Measuring Developer Productivity: Real-World Examples](mdc:https:/newsletter.pragmaticengineer.com/p/measuring-developer-productivity-bae#:~:text=Whether%20measuring%20a%20tool%2C%20process%2C,helping%20to%20surface%20potential%20tradeoffs)). 예를 들어, Microsoft 산하의 LinkedIn은 **Developer Insights** 전담 팀을 운영하며 개발자 생산성과 만족도를 종합적으로 분석하고 있습니다 ([Measuring Developer Productivity: Real-World Examples](mdc:https:/newsletter.pragmaticengineer.com/p/measuring-developer-productivity-bae#:~:text=LinkedIn%20employs%20more%20than%2010%2C000,the%20internal%20tools%20they%20use)). 이러한 모범 사례를 참고하여 본 대시보드에 적용할 지표와 방법론을 선정합니다.  
+- **DORA 지표 반영**: DevOps Research & Assessment(DORA)에서 제시한 **4대 핵심 개발 지표**를 대시보드 설계에 반영합니다. **배포 빈도**, **변경 리드 타임**, **변경 실패율**, **평균 복구 시간**과 같은 지표들은 소프트웨어 전달 성능을 나타내는 업계 표준으로 자리잡고 있습니다 ([Developer Productivity: Effective Ways to Measure and Strategies to Improve](mdc:https:/techhub.asia/how-to-measure-developer-productivity/#:~:text=The%20DORA%20,and%20enhance%20overall%20software%20quality)). 본 프로젝트에서는 이 중 **배포 빈도**와 **실패율** 등을 우선적으로 측정하여 우리 팀의 DevOps 성과를 업계 표준과 비교 평가할 수 있도록 합니다.
+
+## 8. 프로젝트 일정 및 마일스톤 (Timeline & Milestones)
+1. **1주차**: 프로젝트 환경 설정 완료 (Vite 초기 설정, Tailwind CSS 구성, Zustand 상태 관리 셋업)  
+2. **2~3주차**: Github API 연동 개발 및 **데이터 수집 모듈** 구현 (PR 목록, 커밋 내역 불러오기 기능)  
+3. **4~5주차**: 수집 데이터 기반 **지표 계산 로직** 개발 (PR 통계, 리뷰 시간 등 산출)  
+4. **6~7주차**: 대시보드 **UI 디자인** 확정 및 레이아웃 개발 (컴포넌트 배치 및 스타일링)  
+5. **8~9주차**: **필터링 및 데이터 갱신 기능** 구현 (기간별, 프로젝트별 필터 + 실시간 업데이트)  
+6. **10~12주차**: 전체 시스템 **최적화 및 테스트**, **배포 준비** (코드 리팩토링, 성능 점검, 버그 수정, Vercel 배포)  
+
+## 9. 위험 요소 및 대응 방안 (Risks & Mitigations)
+- **Github API 제한**: GitHub API 호출 한도 초과 및 응답 지연 우려가 있습니다. **해결**: 요청 횟수를 줄이기 위해 결과 캐싱, 지수적 백오프 전략을 적용하고, 필요한 경우 GitHub API의 **GraphQL** 적용이나 API 사용 범위 협의를 고려합니다.  
+- **기술 복잡도 (주니어 개발자)**: 상태 관리, 데이터 시각화 등 초기 진입장벽이 있을 수 있습니다. **해결**: Task 분할을 통한 **단계별 개발 가이드**를 제공하고, 코드 리뷰와 멘토링을 통해 팀 내 기술 공유를 활성화합니다.  
+- **지표 해석 오류**: 산출된 생산성 지표에 대한 오해나 잘못된 해석 가능성이 있습니다. **해결**: 지표의 의미와 한계를 문서화하고 **개발자 교육 세션**을 통해 공유합니다. 또한 지표는 절대적인 평가가 아닌 개선 방향을 위한 참고로 활용하도록 안내합니다.
+
+## 10. 통합 및 확장성 계획 (Integration & Scalability Plan)
+- **CI/CD 도구 연동**: Jenkins, CircleCI 등 CI/CD 도구와의 연동을 통해 배포 관련 지표를 자동으로 수집합니다.
+- **이슈 트래커 통합**: Jira, Linear 등 이슈 트래킹 시스템과 연동하여 작업 추적 데이터를 수집합니다.
+- **다중 VCS 지원**: GitHub 외에도 GitLab, Bitbucket 등 다양한 버전 관리 시스템 지원 계획을 수립합니다.
+- **API 확장**: 향후 다른 시스템에서도 대시보드 데이터를 활용할 수 있도록 REST API 제공 계획을 검토합니다.

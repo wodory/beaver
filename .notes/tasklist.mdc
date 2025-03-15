@@ -1,0 +1,258 @@
+---
+description: Tasklist to build the simple productivity dashboard
+globs: 
+alwaysApply: false
+---
+## 0. 개발 원칙
+
+- beaver 폴더를 / 폴더로 작업할 것 (하위에 다시 beaver 폴더 생성 절대 금지)
+- 프레임워크의 공식 문서를 참고해서 개발
+- 문제나 오류가 발생하면 문제와 해결책을 제시한 후 멈출 것. 절대 대안을 스스로 결정해서 실행하지 말 것. 
+- 패키지 관리자는 yarn을 사용.
+
+## 1. 수집할 데이터
+
+- **Github Pull Request (PR) 데이터**  
+  - PR ID, 작성자, 생성 시간, 병합 시간, 상태(열림/병합/닫힘)  
+  - 첫 번째 리뷰 코멘트 시간 및 전체 리뷰 내역 (리뷰어, 코멘트 내용, 승인 여부 등)
+
+- **Github Commit 데이터**  
+  - 각 PR에 포함된 커밋 목록  
+  - 각 커밋의 코드 변경 라인 수 (추가, 삭제)
+
+- **프로젝트 메타데이터**  
+  - 레포지토리명, 프로젝트/팀 태그 등  
+  - (옵션) CI/CD 로그 데이터: 배포 이벤트, 빌드 시간 등
+
+---
+
+## 2. 측정 지표 및 구체적인 추출 공식
+
+- **PR 개수**  
+  - **정의**: 선택한 기간 내에 생성된 PR의 총 개수  
+  - **공식**:  
+    ```
+    PR Count = Count( PR 생성시간 ∈ [시작일, 종료일] )
+    ```
+
+- **코드 변경량 (LOC: Lines of Code)**  
+  - **정의**: PR에 포함된 모든 커밋에서 추가 및 삭제된 라인 수의 합  
+  - **공식**:  
+    ```
+    LOC = Sum( lines_added + lines_removed ) for each commit in PRs
+    ```
+
+- **리뷰 응답 시간 (Review Response Time)**  
+  - **정의**: PR 생성 후 첫 번째 리뷰 코멘트까지 소요된 시간의 평균  
+  - **공식**:  
+    ```
+    Review Response Time = Average( first_review_timestamp - PR_created_timestamp )
+    ```
+
+- **PR 사이클 타임 (Cycle Time)**  
+  - **정의**: PR이 생성된 시점부터 병합 완료 시점까지의 시간  
+  - **공식**:  
+    ```
+    Cycle Time = Average( PR_merged_timestamp - PR_created_timestamp )
+    ```
+
+- **배포 빈도 (Deployment Frequency)** *(옵션)*  
+  - **정의**: 선택한 기간 동안 발생한 배포 건수  
+  - **공식**:  
+    ```
+    Deployment Frequency = Count( 배포 이벤트 ) / 선택 기간
+    ```
+
+- **결함률 (Change Failure Rate)** *(옵션)*  
+  - **정의**: 배포 후 문제(버그, 롤백 등)가 발생한 비율  
+  - **공식**:  
+    ```
+    Change Failure Rate = (Count( 배포 후 문제 발생 ) / Count( 전체 배포 )) * 100
+    ```
+
+---
+
+## 3. 대시보드 개발 Tasklist
+
+### **Task 1: 프로젝트 환경 셋업 (예상 2일)**
+- **목표**: Vite, Tailwind, shadcn, Zustand, Vitest, SQLite, react fetch를 활용하여 기본 프로젝트 환경 구성  
+- **세부 단계**:
+  1. **프로젝트 생성**:  
+     - Vite로 React 기반 프로젝트 생성  
+       ```bash
+       npm create vite@latest project-dashboard --template react
+       ```
+  2. **Tailwind CSS 설정**:  
+     - Tailwind CSS 및 PostCSS 설정 파일(`tailwind.config.js`, `postcss.config.js`) 구성  
+  3. **shadcn UI 구성요소 설치 및 설정**:  
+     - shadcn UI 컴포넌트를 설치하고 기본 테마 커스터마이징  
+  4. **Zustand 설치 및 기본 스토어 설정**:  
+     - 전역 상태 관리를 위한 기본 스토어 생성  
+  5. **Vitest 설치 및 기본 테스트 환경 구성**:  
+     - 테스트 스크립트 작성 및 실행 확인 
+  6. **SQLite 설치 및 기본 테스트 환경 구성**:  
+     - 설치 및 실행 확인
+     - 이후 다른 DB 변경 가능성 높음. 반드시 어뎁터를 구성하여 DB 교체에 대응할 수 있어야 함. 
+---
+
+### **Task 2: Github 데이터 수집 모듈 구현 (예상 5일)**
+- **목표**: Github API를 통해 PR, 커밋, 리뷰 데이터를 자동 수집  
+- **세부 단계**:
+  1. **Octokit 설치**:  
+     - `npm install @octokit/rest`
+  2. **환경 변수 설정**:  
+     - Github Personal Access Token을 `.env` 파일에 저장  
+       ```
+       VITE_GITHUB_TOKEN=your_github_token_here
+       ```
+  3. **프로젝트 설정**: 
+     - config.json 파일에 분석 대상 github 주소를 지정한다. 
+     - 이 주소로 프로젝트를 실행/테스트한다. 
+  4. **API 호출 함수 작성**:  
+     - PR 데이터: `octokit.pulls.list`  
+     - 커밋 데이터: `octokit.pulls.listCommits`  
+     - 리뷰 데이터: `octokit.pulls.listReviews`  
+     - 예) `src/api/github.ts` 파일에 API 함수 구현
+  5. **데이터 필터링**:  
+     - 선택한 기간, 프로젝트 등 조건에 맞게 데이터 필터링  
+  6. **테스트 작성**:  
+     - Vitest를 활용하여 모듈 단위 테스트 작성 (Mock 데이터 포함)
+
+---
+
+### **Task 3: 데이터 처리 및 지표 계산 모듈 개발 (예상 4일)**
+- **목표**: 수집한 데이터를 기반으로 앞서 정의한 지표를 계산하는 로직 구현  
+- **세부 단계**:
+  1. **데이터 파싱 함수 구현**:  
+     - PR마다 첫 리뷰 코멘트 시간, 커밋별 코드 변경량 추출
+  2. **지표 계산 함수 작성**:  
+     - 각 공식에 맞춰 PR 개수, LOC, 리뷰 응답 시간, 사이클 타임 계산
+  3. **결과를 상태 관리(Zustand)에 저장**:  
+     - 계산된 결과를 전역 스토어에 저장해 UI에 연결
+  4. **Vitest로 단위 테스트 작성**
+
+---
+
+### **Task 4: 대시보드 UI 컴포넌트 개발 (예상 7일)**
+- **목표**: shadcn UI와 Tailwind CSS를 사용하여 지표를 시각화하는 컴포넌트 제작  
+- **세부 단계**:
+  1. **디자인 목업 작성**:  
+     - Figma 또는 간단한 스케치로 레이아웃 구성
+     - 환경 설정 반드시 구현. (특히 분석 대상 URL 입력) 
+  2. **각 위젯(카드, 차트 등) 개발**:  
+     - 예: PR 개수 카드, 평균 리뷰 시간 차트, 사이클 타임 차트 등  
+     - 차트 라이브러리 (예: Chart.js, Recharts)를 Vite와 호환되게 추가
+  3. **데이터 연결**:  
+     - Zustand store에서 계산된 데이터를 각 컴포넌트에 props로 전달  
+  4. **반응형 디자인 및 스타일링**:  
+     - Tailwind CSS를 활용해 반응형 레이아웃 구현
+  5. **컴포넌트 테스트**:  
+     - Vitest로 UI 컴포넌트 렌더링 및 인터랙션 테스트
+
+---
+
+### **Task 5: 필터링 및 날짜 선택 기능 개발 (예상 3일)**
+- **목표**: 사용자가 연간, 월간, 사용자 지정 기간 및 프로젝트별로 데이터를 필터링할 수 있는 인터페이스 구현  
+- **세부 단계**:
+  1. **날짜 선택 컴포넌트 개발**:  
+     - react-date-range 같은 라이브러리 또는 커스텀 컴포넌트 사용  
+  2. **프로젝트/팀 선택 드롭다운 구성**
+  3. **필터 변경 시 데이터 재조회 및 스토어 업데이트 로직 구현**
+  4. **업데이트 단추** 
+  5. **테스트**:  
+     - Vitest로 필터 기능 및 상태 업데이트 테스트
+
+---
+
+### **Task 6: 데이터 갱신 기능 개발 (예상 3일)**
+- **목표**: Dashboard 사용자가 [업데이트] 단추를 누르면 데이터를 새로고침  
+- **세부 단계**:
+  1. **업데이트 기능 구현**:  
+     - 사용자 UI에서 이벤트 발생 -> Github API 호출
+  2. **데이터 갱신 시 Zustand store 업데이트**  
+  3. **반영 테스트 (Vitest로 로직 검증)**
+
+---
+
+### **Task 7: 최종 통합 및 배포 준비 (예상 2일)**
+- **목표**: 모든 모듈 통합, 종합 테스트 및 배포 준비  
+- **세부 단계**:
+  1. **모듈 통합 및 End-to-End 테스트 작성**
+  2. **Vite 빌드 최적화 및 배포 스크립트 작성**  
+     - 예: Vercel 또는 Netlify에 배포
+  3. **개발자 가이드 및 README 작성**
+
+---
+
+## 4. 구체적인 구현 가이드 예시: Github PR 데이터 수집
+
+### **목표**:  
+Github API를 활용해 PR 데이터를 수집하고, 이를 기반으로 지표를 계산하여 대시보드에 표시
+
+### **구현 단계**:
+
+1. **Octokit 설치 및 설정**  
+   - **설치**:  
+     ```bash
+     npm install @octokit/rest
+     ```
+   - **환경 변수 설정**:  
+     - `.env` 파일에 아래와 같이 입력  
+       ```
+       VITE_GITHUB_TOKEN=your_github_token_here
+       ```
+
+2. **API 모듈 작성 (예: `src/api/github.ts`)**:
+   ```typescript
+   import { Octokit } from "@octokit/rest";
+
+   const octokit = new Octokit({ auth: import.meta.env.VITE_GITHUB_TOKEN });
+
+   // PR 데이터 수집 함수
+   export async function fetchPullRequests(owner: string, repo: string, since: string, until: string) {
+     const { data } = await octokit.pulls.list({
+       owner,
+       repo,
+       state: "all",
+       per_page: 100,
+     });
+     // 선택 기간에 맞게 필터링
+     return data.filter(pr => {
+       const createdAt = new Date(pr.created_at);
+       return createdAt >= new Date(since) && createdAt <= new Date(until);
+     });
+   }
+   ```
+3. **리뷰 데이터 수집**  
+   - 각 PR에 대해 `octokit.pulls.listReviews`를 호출하여 리뷰 타임스탬프 및 상태를 수집  
+   - 이를 통해 ‘첫 리뷰 코멘트 시간’ 등 지표를 계산
+
+4. **상태 관리 연동 (예: Zustand 사용)**  
+   - `src/store/dashboardStore.ts` 파일에서 스토어 구성:
+   ```typescript
+   import create from 'zustand';
+   import { fetchPullRequests } from '../api/github';
+
+   interface DashboardState {
+     prs: any[];
+     setPRs: (prs: any[]) => void;
+     updatePRs: () => Promise<void>;
+   }
+
+   export const useDashboardStore = create<DashboardState>((set) => ({
+     prs: [],
+     setPRs: (prs) => set({ prs }),
+     updatePRs: async () => {
+       const prs = await fetchPullRequests("owner", "repo", "2023-01-01", "2023-12-31");
+       set({ prs });
+     }
+   }));
+   ```
+5. **테스트 작성**  
+   - Vitest를 이용해 API 함수와 스토어 업데이트 기능에 대한 단위 테스트 작성  
+   - Mock 데이터를 사용하여 예상 결과 검증
+
+---
+
+**to do**
+- [ ] 근무 시간 연동

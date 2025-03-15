@@ -1,0 +1,29 @@
+{
+  "repositories": [
+    {
+      "name": "react",
+      "owner": "facebook",
+      "description": "Facebook의 React 라이브러리"
+    },
+    {
+      "name": "arch_flow",
+      "owner": "wodory",
+      "description": "wodory의 arch_flow 저장소"
+    },
+    {
+      "name": "backyard",
+      "owner": "wodory",
+      "description": "wodory의 backyard 저장소"
+    },
+    {
+      "name": "d3-hierarchy",
+      "owner": "d3",
+      "description": "2D layout algorithms for visualizing hierarchical data."
+    }
+  ],
+  "defaultTimeRange": {
+    "since": "2023-01-01",
+    "until": "2023-12-31"
+  },
+  "refreshInterval": 300000
+}
