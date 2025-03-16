@@ -242,6 +242,8 @@ export function DoraMetrics({ filterState }: DoraMetricsProps) {
 
   // 기간 정보 텍스트 생성
   const getPeriodText = (filter: FilterState) => {
+    console.log('DoraMetrics - getPeriodText called with filter:', filter);
+    
     if (filter.datePreset === "custom" && filter.startDate && filter.endDate) {
       return `${format(filter.startDate, 'yyyy/MM/dd', { locale: ko })} 부터 ${format(filter.endDate, 'yyyy/MM/dd', { locale: ko })} 까지`;
     }

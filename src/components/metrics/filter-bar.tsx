@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { 
   Select,
   SelectContent,
@@ -33,22 +33,69 @@ interface FilterBarProps {
     project: string;
     startDate: Date | null;
     endDate: Date | null;
+    datePreset?: string;
   }) => void;
+  filterState?: {
+    project: string;
+    startDate: Date | null;
+    endDate: Date | null;
+    datePreset?: string;
+  };
 }
 
-export function FilterBar({ onFilterChange }: FilterBarProps) {
-  const [selectedProject, setSelectedProject] = useState("all");
-  const [selectedDatePreset, setSelectedDatePreset] = useState("30d");
-  const [startDate, setStartDate] = useState<Date | undefined>(subDays(new Date(), 30));
-  const [endDate, setEndDate] = useState<Date | undefined>(new Date());
-  const [isCustomDate, setIsCustomDate] = useState(false);
+export function FilterBar({ onFilterChange, filterState }: FilterBarProps) {
+  const [selectedProject, setSelectedProject] = useState(filterState?.project || "all");
+  const [selectedDatePreset, setSelectedDatePreset] = useState(filterState?.datePreset || "30d");
+  const [startDate, setStartDate] = useState<Date | undefined>(
+    filterState?.startDate ? new Date(filterState.startDate) : subDays(new Date(), 30)
+  );
+  const [endDate, setEndDate] = useState<Date | undefined>(
+    filterState?.endDate ? new Date(filterState.endDate) : new Date()
+  );
+  const [isCustomDate, setIsCustomDate] = useState(selectedDatePreset === "custom");
+
+  // filterState가 외부에서 변경되면 내부 상태 업데이트
+  useEffect(() => {
+    if (filterState) {
+      console.log('FilterBar - filterState prop changed:', filterState);
+      setSelectedProject(filterState.project || "all");
+      setSelectedDatePreset(filterState.datePreset || "30d");
+      
+      if (filterState.startDate) {
+        setStartDate(new Date(filterState.startDate));
+      }
+      
+      if (filterState.endDate) {
+        setEndDate(new Date(filterState.endDate));
+      }
+      
+      setIsCustomDate(filterState.datePreset === "custom");
+    }
+  }, [filterState]);
 
   // 날짜 프리셋이 변경될 때 날짜 범위 업데이트
   const handleDatePresetChange = (value: string) => {
+    console.log('FilterBar - handleDatePresetChange:', value);
     setSelectedDatePreset(value);
     
     if (value === "custom") {
       setIsCustomDate(true);
+      
+      if (onFilterChange) {
+        console.log('FilterBar - onFilterChange from custom preset:', { 
+          project: selectedProject, 
+          startDate, 
+          endDate,
+          datePreset: value
+        });
+        onFilterChange({
+          project: selectedProject,
+          startDate,
+          endDate,
+          datePreset: value
+        });
+      }
+      
       return;
     }
     
@@ -61,10 +108,17 @@ export function FilterBar({ onFilterChange }: FilterBarProps) {
       setEndDate(end);
       
       if (onFilterChange) {
+        console.log('FilterBar - onFilterChange from preset:', { 
+          project: selectedProject, 
+          startDate: start, 
+          endDate: end,
+          datePreset: value
+        });
         onFilterChange({
           project: selectedProject,
           startDate: start,
-          endDate: end
+          endDate: end,
+          datePreset: value
         });
       }
     }
@@ -72,38 +126,62 @@ export function FilterBar({ onFilterChange }: FilterBarProps) {
 
   // 프로젝트가 변경될 때 필터 업데이트
   const handleProjectChange = (value: string) => {
+    console.log('FilterBar - handleProjectChange:', value);
     setSelectedProject(value);
     
     if (onFilterChange) {
+      console.log('FilterBar - onFilterChange from project:', { 
+        project: value, 
+        startDate, 
+        endDate,
+        datePreset: selectedDatePreset
+      });
       onFilterChange({
         project: value,
         startDate,
-        endDate
+        endDate,
+        datePreset: selectedDatePreset
       });
     }
   };
 
   // 사용자 지정 날짜가 변경될 때 처리
   const handleStartDateChange = (date: Date | undefined) => {
+    console.log('FilterBar - handleStartDateChange:', date);
     setStartDate(date);
     
     if (onFilterChange && date) {
+      console.log('FilterBar - onFilterChange from startDate:', { 
+        project: selectedProject, 
+        startDate: date, 
+        endDate,
+        datePreset: selectedDatePreset
+      });
       onFilterChange({
         project: selectedProject,
         startDate: date,
-        endDate
+        endDate,
+        datePreset: selectedDatePreset
       });
     }
   };
 
   const handleEndDateChange = (date: Date | undefined) => {
+    console.log('FilterBar - handleEndDateChange:', date);
     setEndDate(date);
     
     if (onFilterChange && date) {
+      console.log('FilterBar - onFilterChange from endDate:', { 
+        project: selectedProject, 
+        startDate, 
+        endDate: date,
+        datePreset: selectedDatePreset
+      });
       onFilterChange({
         project: selectedProject,
         startDate,
-        endDate: date
+        endDate: date,
+        datePreset: selectedDatePreset
       });
     }
   };

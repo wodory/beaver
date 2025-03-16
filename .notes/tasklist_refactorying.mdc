@@ -3,7 +3,7 @@ description:
 globs: 
 alwaysApply: false
 ---
-- [ ] App Layout
+- [ㅌ] App Layout
     - [x] Sidebar
     - [x] Screen : browser width - sidebar width
         - [x] Header
@@ -27,17 +27,20 @@ alwaysApply: false
         Team
         People 
         Reports
-        
-        
         {Auto magrin}
-            
-        
         Settings
         Your Photo [log in/out]
         ~~
 - [x] Header
     - [x] Sidebar 접기
     - [x] search 제거
+- [x] MatricsCard 컴포넌트 만들기
+     - [x] 타이틀, 버튼, 차트 영역
+     - [x] 타이틀 텍스트의 마크업(템플릿?)은 외부 주입
+     - [x] 버튼 갯수 + 각 버튼 상징색 (=차트에서 쓸 색) 주입
+     - [x] 각 버튼의 모양 (템플릿?) + 내용도 주입. 
+     - [x] 각 버튼의 차트 컴포넌트 모양 주입
+     - [x] 외부 데이터 업데이트 될 경우 상태 변경 서로 싱크해서 반영. 
 - [x] DORA 메트릭스 (기존 개발 버전) 화면 구성
      - [x] Header에 제목 표시 "Beaver > DORA 메트릭스"
      - [x] 헤더 하단 = Screen 상단에 필터 
