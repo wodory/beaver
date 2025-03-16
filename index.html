@@ -4,10 +4,31 @@
     <meta charset="UTF-8" />
     <link rel="icon" type="image/svg+xml" href="/vite.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Vite + React + TS</title>
+    <title>Beaver - GitHub DevOps 지표 대시보드</title>
+    <!-- 개발 디버깅용 Tailwind CSS CDN -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+      .test-data-link {
+        position: fixed;
+        bottom: 10px;
+        right: 10px;
+        background-color: #1a73e8;
+        color: white;
+        padding: 5px 10px;
+        border-radius: 4px;
+        font-size: 12px;
+        text-decoration: none;
+        opacity: 0.7;
+        z-index: 1000;
+      }
+      .test-data-link:hover {
+        opacity: 1;
+      }
+    </style>
   </head>
   <body>
     <div id="root"></div>
+    <a href="/inject-test-data.html" class="test-data-link" target="_blank">테스트 데이터 도구</a>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>

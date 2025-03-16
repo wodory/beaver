@@ -23,6 +23,8 @@ export interface MetricsResult {
   totalLinesOfCode: number;       // 전체 코드 변경량 (추가 + 삭제)
   avgReviewResponseTime: number;  // 평균 리뷰 응답 시간 (밀리초)
   avgPRCycleTime: number;         // 평균 PR 사이클 타임 (밀리초)
+  deploymentFrequency?: number;   // 배포 빈도 (옵션)
+  changeFailureRate?: number;     // 결함률 (옵션)
 }
 
 /**
@@ -34,4 +36,18 @@ export interface PRStateTransition {
   firstReview?: Date;
   merged?: Date;
   closed?: Date;
+}
+
+/**
+ * 배포 이벤트 인터페이스 - 배포 관련 정보를 나타냅니다.
+ */
+export interface DeploymentEvent {
+  id: number;
+  repository: string;
+  environment: string;
+  created_at: string;
+  completed_at?: string;
+  status: 'success' | 'failure' | 'pending';
+  has_issues: boolean;
+  created_by: string;
 } 

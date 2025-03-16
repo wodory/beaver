@@ -1,0 +1,39 @@
+---
+description: 
+globs: 
+alwaysApply: false
+---
+- [ ] 사이드바 
+    - [ ] snadcn의 sidebar 추가
+    - [ ] 메뉴 구성
+        ~~
+        Beaver 
+        v0.1
+        [Search inputbox]
+
+        Project
+            Project Overview
+            DORA Matrics 
+            Dev Metrics 
+            Review Collaboration
+            Team Welbeing
+        Team
+        People 
+        Reports
+        
+        
+        {Auto magrin}
+            
+        
+        Settings
+        Your Photo [log in/out]
+        ~~
+- [ ] Header
+- [ ] DORA 메트릭스 (기존 개발 버전) 화면 구성
+     - [ ] 프로젝트 필터
+     - [ ] 기간 설정
+- [ ] Dev Metrics
+     - [ ] [dev-metric.png](mdc:.notes/dev-metric.png)
+     - [ ] 개인별, 직군별, 프로젝트별 필터
+     - [ ] 기간 설정
+     - 

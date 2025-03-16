@@ -5,9 +5,13 @@ import {
   findFirstReviewTime, 
   calculateAverageReviewResponseTime, 
   calculateAveragePRCycleTime,
+  calculateDeploymentFrequency,
+  calculateChangeFailureRate,
   calculateMetrics
 } from '../lib/metrics';
 import { PullRequest, Review, Commit } from '../api/github';
+import { DeploymentEvent } from '../types/github';
+import { fetchPullRequests, fetchPullRequestReviews, fetchPullRequestCommits, fetchCommitDetails, fetchDeployments } from '../api/github';
 
 // 테스트용 목 데이터
 const mockPullRequests: PullRequest[] = [
@@ -150,6 +154,40 @@ const mockPrDetails: Record<number, { reviews: Review[], commits: Commit[] }> = 
   103: { reviews: mockReviews[103], commits: mockCommits[103] }
 };
 
+// 테스트용 배포 데이터
+const mockDeployments: DeploymentEvent[] = [
+  {
+    id: 1,
+    repository: 'test/repo',
+    environment: 'production',
+    created_at: '2023-06-12T12:00:00Z',
+    completed_at: '2023-06-12T12:05:00Z',
+    status: 'success',
+    has_issues: false,
+    created_by: 'user1'
+  },
+  {
+    id: 2,
+    repository: 'test/repo',
+    environment: 'production',
+    created_at: '2023-06-14T15:00:00Z',
+    completed_at: '2023-06-14T15:10:00Z',
+    status: 'failure',
+    has_issues: true,
+    created_by: 'user2'
+  },
+  {
+    id: 3,
+    repository: 'test/repo',
+    environment: 'staging',
+    created_at: '2023-06-16T10:00:00Z',
+    completed_at: '2023-06-16T10:03:00Z',
+    status: 'success',
+    has_issues: false,
+    created_by: 'user3'
+  }
+];
+
 describe('메트릭 계산 함수 테스트', () => {
   describe('calculatePRCount', () => {
     it('PR 개수를 정확하게 계산해야 함', () => {
@@ -218,9 +256,56 @@ describe('메트릭 계산 함수 테스트', () => {
     });
   });
 
+  describe('calculateDeploymentFrequency', () => {
+    it('선택 기간 내 배포 빈도를 정확하게 계산해야 함', () => {
+      const startDate = new Date('2023-06-10T00:00:00Z');
+      const endDate = new Date('2023-06-15T00:00:00Z');
+      
+      const frequency = calculateDeploymentFrequency(mockDeployments, startDate, endDate);
+      
+      // 2023-06-10 ~ 2023-06-15는 5일 기간
+      // 이 기간 내에 2개의 배포가 있음 => 2/5 = 0.4 (일당 배포 횟수)
+      expect(frequency).toBeCloseTo(0.4, 2);
+    });
+    
+    it('기간 외 배포는 계산하지 않아야 함', () => {
+      const startDate = new Date('2023-06-15T00:00:00Z');
+      const endDate = new Date('2023-06-17T00:00:00Z');
+      
+      const frequency = calculateDeploymentFrequency(mockDeployments, startDate, endDate);
+      
+      // 2023-06-15 ~ 2023-06-17는 2일 기간
+      // 이 기간 내에 1개의 배포가 있음 => 1/2 = 0.5 (일당 배포 횟수)
+      expect(frequency).toBeCloseTo(0.5, 2);
+    });
+    
+    it('기간이 0일 경우 0을 반환해야 함', () => {
+      const sameDate = new Date('2023-06-15T00:00:00Z');
+      
+      const frequency = calculateDeploymentFrequency(mockDeployments, sameDate, sameDate);
+      
+      expect(frequency).toBe(0);
+    });
+  });
+  
+  describe('calculateChangeFailureRate', () => {
+    it('결함률을 정확하게 계산해야 함', () => {
+      const failureRate = calculateChangeFailureRate(mockDeployments);
+      
+      // 전체 3개 배포 중 1개에 문제 발생 => 33.33%
+      expect(failureRate).toBeCloseTo(33.33, 1);
+    });
+    
+    it('배포가 없을 경우 0을 반환해야 함', () => {
+      const failureRate = calculateChangeFailureRate([]);
+      
+      expect(failureRate).toBe(0);
+    });
+  });
+
   describe('calculateMetrics', () => {
     it('모든 메트릭을 정확하게 계산해야 함', () => {
-      const metrics = calculateMetrics(mockPullRequests, mockPrDetails);
+      const metrics = calculateMetrics(mockPullRequests, mockPrDetails, mockDeployments);
       
       // PR 개수
       expect(metrics.prCount).toBe(3);
@@ -228,9 +313,95 @@ describe('메트릭 계산 함수 테스트', () => {
       // 코드 변경량: 150 + 130 + 200 = 480
       expect(metrics.totalLinesOfCode).toBe(480);
       
+      // 배포 빈도 및 결함률도 계산되어야 함
+      expect(metrics.deploymentFrequency).toBeDefined();
+      expect(metrics.changeFailureRate).toBeCloseTo(33.33, 1);
+      
       // 리뷰 응답 시간 및 사이클 타임은 이전 테스트와 동일
       expect(metrics.avgReviewResponseTime).toBeGreaterThan(0);
       expect(metrics.avgPRCycleTime).toBeGreaterThan(0);
     });
+    
+    it('배포 데이터가 없을 경우에도 다른 메트릭이 계산되어야 함', () => {
+      const metrics = calculateMetrics(mockPullRequests, mockPrDetails);
+      
+      expect(metrics.prCount).toBe(3);
+      expect(metrics.totalLinesOfCode).toBe(480);
+      expect(metrics.deploymentFrequency).toBe(0);
+      expect(metrics.changeFailureRate).toBe(0);
+    });
   });
+});
+
+// 테스트가 10초 이상 걸릴 수 있으므로 타임아웃 설정
+describe('Facebook React 저장소 메트릭스 테스트', () => {
+  it('facebook/react 저장소의 2025년 2월 1일부터 오늘까지의 지표를 계산합니다', async () => {
+    // Facebook React 저장소 정보
+    const owner = 'facebook';
+    const repo = 'react';
+    
+    // 기간 설정: 2025년 2월 1일부터 오늘까지
+    const since = '2025-02-01T00:00:00Z';
+    const until = new Date().toISOString();
+    
+    console.log(`${owner}/${repo} 저장소의 ${since} ~ ${until} 기간 메트릭스 조회 중...`);
+    
+    try {
+      // PR 데이터 가져오기
+      const pullRequests = await fetchPullRequests(owner, repo, since, until);
+      console.log(`가져온 PR 개수: ${pullRequests.length}`);
+      
+      // PR 상세 정보 가져오기
+      const prDetails: Record<number, { reviews: any[], commits: any[] }> = {};
+      
+      // 시간 단축을 위해 최대 10개의 PR만 상세 조회
+      const limitedPRs = pullRequests.slice(0, 10);
+      
+      for (const pr of limitedPRs) {
+        const prNumber = pr.number;
+        
+        // 리뷰 및 커밋 데이터 가져오기
+        const [reviews, commits] = await Promise.all([
+          fetchPullRequestReviews(owner, repo, prNumber),
+          fetchPullRequestCommits(owner, repo, prNumber)
+        ]);
+        
+        // 커밋 상세 정보 가져오기
+        const commitDetails = await Promise.all(
+          commits.map(commit => fetchCommitDetails(owner, repo, commit.sha))
+        );
+        
+        // 결과 저장
+        prDetails[prNumber] = {
+          reviews,
+          commits: commitDetails
+        };
+        
+        console.log(`PR #${prNumber} 상세 정보 처리 완료`);
+      }
+      
+      // 배포 데이터 가져오기
+      const deployments = await fetchDeployments(owner, repo);
+      
+      // 메트릭스 계산
+      const metrics = calculateMetrics(pullRequests, prDetails, deployments);
+      
+      // 결과 출력
+      console.log('\n====== 측정 결과 ======');
+      console.log(`1. PR 개수: ${metrics.prCount}개`);
+      console.log(`2. 코드 변경량: ${metrics.totalLinesOfCode}줄`);
+      console.log(`3. 평균 리뷰 응답 시간: ${(metrics.avgReviewResponseTime / (1000 * 60 * 60)).toFixed(2)}시간`);
+      console.log(`4. 평균 PR 사이클 타임: ${(metrics.avgPRCycleTime / (1000 * 60 * 60)).toFixed(2)}시간`);
+      console.log(`5. 배포 빈도: ${metrics.deploymentFrequency?.toFixed(4) || '측정 불가'} 회/일`);
+      console.log(`6. 결함률: ${metrics.changeFailureRate?.toFixed(2) || '측정 불가'}%`);
+      
+      // 테스트 통과 조건 (메트릭스 값이 존재하는지 확인)
+      expect(metrics.prCount).toBeGreaterThanOrEqual(0);
+      expect(metrics.totalLinesOfCode).toBeGreaterThanOrEqual(0);
+      
+    } catch (error) {
+      console.error('메트릭스 계산 오류:', error);
+      throw error; // 테스트 실패 처리
+    }
+  }, 60000); // 60초 타임아웃 설정
 }); 

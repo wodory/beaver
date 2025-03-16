@@ -1,34 +1,29 @@
 import { useState } from 'react'
-import reactLogo from './assets/react.svg'
-import viteLogo from '/vite.svg'
-import './App.css'
+// App.css는 index.css로 통합되었으므로 import 구문 제거
+import { AppSidebar } from './components/app-sidebar'
+import { SiteHeader } from './components/site-header'
+import { DoraMetrics } from './components/metrics/dora-metrics'
+import { SidebarProvider } from '@/components/ui/sidebar'
 
 function App() {
-  const [count, setCount] = useState(0)
+  const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false)
+
+  const toggleSidebar = () => {
+    setIsSidebarCollapsed(!isSidebarCollapsed)
+  }
 
   return (
-    <>
-      <div>
-        <a href="https://vite.dev" target="_blank">
-          <img src={viteLogo} className="logo" alt="Vite logo" />
-        </a>
-        <a href="https://react.dev" target="_blank">
-          <img src={reactLogo} className="logo react" alt="React logo" />
-        </a>
+    <SidebarProvider>
+      <div className="flex h-screen overflow-hidden" style={{ backgroundColor: 'hsl(var(--background))' }}>
+        <AppSidebar isCollapsed={isSidebarCollapsed} />
+        <div className="flex flex-col flex-1 overflow-hidden">
+          <SiteHeader onToggleSidebar={toggleSidebar} />
+          <main className="flex-1 overflow-auto p-6">
+            <DoraMetrics />
+          </main>
+        </div>
       </div>
-      <h1>Vite + React</h1>
-      <div className="card">
-        <button onClick={() => setCount((count) => count + 1)}>
-          count is {count}
-        </button>
-        <p>
-          Edit <code>src/App.tsx</code> and save to test HMR
-        </p>
-      </div>
-      <p className="read-the-docs">
-        Click on the Vite and React logos to learn more
-      </p>
-    </>
+    </SidebarProvider>
   )
 }
 
