@@ -1,4 +1,5 @@
 @import "tailwindcss";
+@import "./chart.css";
 
 /* 폰트 정의 및 기타 스타일 */
 @font-face {

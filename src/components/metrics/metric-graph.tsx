@@ -1,5 +1,5 @@
 import { Card } from "@/components/ui/card"
-import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from "recharts"
+import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from "recharts"
 
 interface MetricGraphProps {
   data: Array<{
@@ -13,20 +13,38 @@ export function MetricGraph({ data }: MetricGraphProps) {
     <Card className="p-4">
       <div className="h-[300px]">
         <ResponsiveContainer width="100%" height="100%">
-          <LineChart data={data} margin={{ top: 5, right: 20, bottom: 5, left: 0 }}>
-            <CartesianGrid strokeDasharray="3 3" />
-            <XAxis dataKey="date" />
-            <YAxis />
-            <Tooltip />
-            <Line 
-              type="monotone" 
-              dataKey="value" 
-              stroke="#8884d8" 
-              strokeWidth={2}
-              dot={false}
-              activeDot={{ r: 8 }}
+          <BarChart data={data} margin={{ top: 5, right: 20, bottom: 20, left: 0 }}>
+            <CartesianGrid strokeDasharray="3 3" vertical={false} />
+            <XAxis 
+              dataKey="date" 
+              axisLine={false}
+              tickLine={false}
+              tick={{ fontSize: 12, fontFamily: 'inherit', fill: 'hsl(var(--muted-foreground))' }}
+              tickMargin={10}
             />
-          </LineChart>
+            <YAxis 
+              axisLine={false}
+              tickLine={false}
+              tick={{ fontSize: 12, fontFamily: 'inherit', fill: 'hsl(var(--muted-foreground))' }}
+            />
+            <Tooltip 
+              contentStyle={{ 
+                backgroundColor: 'hsl(var(--background))', 
+                borderColor: 'hsl(var(--border))',
+                borderRadius: '0.5rem',
+                boxShadow: '0 10px 15px -3px rgb(0 0 0 / 0.1), 0 4px 6px -4px rgb(0 0 0 / 0.1)',
+                fontSize: '12px',
+                fontFamily: 'inherit'
+              }}
+              cursor={{ fill: 'hsl(var(--muted))' }}
+            />
+            <Bar 
+              dataKey="value" 
+              fill="hsl(var(--primary))" 
+              radius={[4, 4, 0, 0]}
+              maxBarSize={40}
+            />
+          </BarChart>
         </ResponsiveContainer>
       </div>
     </Card>

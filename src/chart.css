@@ -1,0 +1,57 @@
+/* Flat UI Colors 팔레트 */
+:root {
+  /* 기본 색상 */
+  --flat-turquoise: #1abc9c;
+  --flat-emerald: #2ecc71;
+  --flat-peter-river: #3498db;
+  --flat-amethyst: #9b59b6;
+  --flat-wet-asphalt: #34495e;
+  
+  /* Green 계열 */
+  --flat-green-sea: #16a085;
+  --flat-nephritis: #27ae60;
+  
+  /* Blue 계열 */
+  --flat-belize-hole: #2980b9;
+  
+  /* Purple 계열 */
+  --flat-wisteria: #8e44ad;
+  --flat-midnight-blue: #2c3e50;
+  
+  /* Yellow/Orange 계열 */
+  --flat-sunflower: #f1c40f;
+  --flat-carrot: #e67e22;
+  --flat-pumpkin: #d35400;
+  
+  /* Red 계열 */
+  --flat-alizarin: #e74c3c;
+  --flat-pomegranate: #c0392b;
+  
+  /* Gray 계열 */
+  --flat-clouds: #ecf0f1;
+  --flat-silver: #bdc3c7;
+  --flat-concrete: #95a5a6;
+  --flat-asbestos: #7f8c8d;
+  
+  /* Orange 계열 */
+  --flat-orange: #f39c12;
+}
+
+/* 메트릭 차트 색상 */
+:root {
+  --chart-deployment-frequency: var(--flat-peter-river);
+  --chart-change-failure-rate: var(--flat-alizarin);
+  --chart-cycle-time: var(--flat-carrot);
+  --chart-mean-time-to-response: var(--flat-emerald);
+}
+
+/* 투명도 변형 */
+.bg-chart-deployment-frequency-20 { background-color: rgba(52, 152, 219, 0.2); }
+.bg-chart-change-failure-rate-20 { background-color: rgba(231, 76, 60, 0.2); }
+.bg-chart-cycle-time-20 { background-color: rgba(230, 126, 34, 0.2); }
+.bg-chart-mean-time-to-response-20 { background-color: rgba(46, 204, 113, 0.2); }
+
+.bg-chart-deployment-frequency-15 { background-color: rgba(52, 152, 219, 0.15); }
+.bg-chart-change-failure-rate-15 { background-color: rgba(231, 76, 60, 0.15); }
+.bg-chart-cycle-time-15 { background-color: rgba(230, 126, 34, 0.15); }
+.bg-chart-mean-time-to-response-15 { background-color: rgba(46, 204, 113, 0.15); } 
