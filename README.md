@@ -1,96 +1,106 @@
-# GitHub 생산성 대시보드
+# Beaver - GitHub 메트릭 수집 도구
 
-GitHub Pull Request 데이터를 분석하여 개발 생산성 지표를 시각화하는 대시보드 애플리케이션입니다.
+Beaver는 GitHub, GitHub Enterprise, GitLab 등 다양한 Git 저장소에서 커밋, PR, 리뷰 데이터를 수집하고 분석하는 도구입니다.
 
-## 주요 기능
+## 설치 및 실행 가이드
 
-- GitHub 저장소의 PR, 커밋, 리뷰 데이터 자동 수집
-- 저장소 이름만으로 쉽게 분석 대상 추가 가능
-- PR 개수, 코드 변경량(LOC), 리뷰 응답 시간, 사이클 타임 등 주요 지표 계산
-- 대시보드를 통한 지표 시각화
-- 공개 및 비공개 저장소 모두 지원
+### 필수 조건
 
-## 기술 스택
+- Node.js 16 이상
+- npm 또는 yarn
+- Git
 
-- React 19
-- TypeScript
-- Vite
-- Tailwind CSS
-- shadcn UI
-- Zustand (상태 관리)
-- Vitest (테스트)
-- GitHub API (Octokit)
+### 설치 방법
 
-## 시작하기
-
-### 1. 저장소 클론
+1. 저장소 복제
 
 ```bash
-git clone https://github.com/your-username/beaver.git
+git clone <저장소 URL>
 cd beaver
 ```
 
-### 2. 의존성 설치
+2. 의존성 설치
 
 ```bash
+npm install
+# 또는
 yarn install
 ```
 
-### 3. 환경 변수 설정
-
-GitHub API에 접근하기 위해서는 Personal Access Token이 필요합니다.
-
-1. GitHub 토큰 생성:
-   - [GitHub Settings > Developer settings > Personal access tokens](https://github.com/settings/tokens/new)에서 새 토큰 생성
-   - 필요한 권한: `repo` (저장소 접근), `user` (사용자 정보 접근)
-   - 생성된 토큰을 안전한 곳에 복사해두세요.
-
-2. `.env` 파일 생성:
-   - 프로젝트 루트 디렉토리에 `.env.sample` 파일을 복사하여 `.env` 파일 생성
-   ```bash
-   cp .env.sample .env
-   ```
-   - `.env` 파일을 편집하고 `VITE_GITHUB_TOKEN` 값을 생성한 GitHub 토큰으로 설정
-   ```
-   VITE_GITHUB_TOKEN=your_github_personal_access_token_here
-   ```
-
-3. (선택 사항) 분석할 저장소 설정:
-   - `src/config.json` 파일에서 분석하고 싶은 GitHub 저장소를 추가/수정
-
-### 4. 애플리케이션 실행
+3. 데이터베이스 초기화
 
 ```bash
-yarn dev
+# SQLite 데이터베이스 초기화 (기본 설정)
+npx tsx src/scripts/init-database.ts
 ```
 
-이제 브라우저에서 `http://localhost:3000`으로 접속하여 애플리케이션을 사용할 수 있습니다.
-
-## 저장소 관리
-
-### 저장소 이름만으로 설정에 추가하기
-
-저장소의 소유자(owner) 정보를 모르더라도, 이름만으로 저장소를 추가할 수 있습니다:
-
-```typescript
-import { addRepository } from './lib/config-manager';
-import dotenv from 'dotenv';
-
-dotenv.config();
-const token = process.env.VITE_GITHUB_TOKEN;
-
-// 저장소 이름만으로 추가
-await addRepository('저장소_이름', token);
-```
-
-## 테스트
-
-테스트를 실행하려면:
+4. 테스트 실행 (선택 사항)
 
 ```bash
-yarn test
+# Git 동기화 테스트
+npx tsx src/scripts/test-git-sync.ts
 ```
 
-## 라이센스
+### 환경 변수 설정 (선택 사항)
 
-[MIT](LICENSE)
+`.env` 파일을 프로젝트 루트에 생성하여 다음과 같이 설정할 수 있습니다:
+
+```
+# 데이터베이스 타입 (sqlite 또는 postgresql)
+DB_TYPE=sqlite
+
+# SQLite 파일 경로 (SQLite 사용 시)
+SQLITE_DB_PATH=./data/github-metrics.db
+
+# PostgreSQL 연결 문자열 (PostgreSQL 사용 시)
+DATABASE_URL=postgresql://localhost:5432/github_metrics
+```
+
+## 개발 현황
+
+현재 개발 진행 상황:
+
+- ✅ Phase 1: 데이터베이스 스키마 설계 및 저장소 관리 모듈 구현 완료
+- ✅ Phase 2 (Task 2.1): Git 서비스 어댑터 구현 완료
+- 🔄 **다음 작업**: Phase 2 (Task 2.2)부터 진행 예정
+
+### 다음 단계 안내
+
+`tasklist_metric_v02.mdc` 파일의 Task 2.2부터 구현을 진행해야 합니다. 이 작업은 실제 Git 서비스 API와 연동하여 데이터를 수집하는 기능을 구현하는 단계입니다.
+
+## 설정 파일
+
+`src/config.json` 파일에서 저장소 정보를 설정할 수 있습니다:
+
+```json
+{
+  "repositories": [
+    {
+      "id": 1,
+      "name": "repo1",
+      "fullName": "owner/repo1",
+      "cloneUrl": "https://github.com/owner/repo1.git",
+      "type": "github",
+      "apiUrl": "https://api.github.com"
+    }
+  ]
+}
+```
+
+## 폴더 구조
+
+```
+src/
+├── config.json        # 설정 파일
+├── db/                # 데이터베이스 관련 코드
+│   ├── adapters/      # 데이터베이스 어댑터
+│   ├── migrations/    # 마이그레이션 파일
+│   ├── schema/        # PostgreSQL 스키마
+│   └── schema-sqlite/ # SQLite 스키마
+├── scripts/           # 스크립트 파일
+│   ├── init-database.ts  # DB 초기화
+│   └── test-git-sync.ts  # 동기화 테스트
+└── services/          # 서비스 모듈
+    ├── git/           # Git 서비스 관련 코드
+    └── repository-manager.ts # 저장소 관리
+```
