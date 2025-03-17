@@ -1,0 +1,1181 @@
+---
+description: 
+globs: 
+alwaysApply: false
+---
+# GitHub 지표 수집 시스템 구현 태스크리스트 (Vite, Shadcn, Tailwind CSS, SQLite)
+
+## Phase 1: 프로젝트 설정 및 기본 구조 (1주)
+
+### Task 1.1: 데이터베이스 스키마 설계
+- **목표**: Drizzle ORM을 사용한 SQLite 스키마 설계
+- **상세 내용**:
+  - `src/db/schema.ts` 파일에 테이블 스키마 정의
+  ```typescript
+  // src/db/schema.ts 예시
+  import { sqliteTable, text, integer } from 'drizzle-orm/sqlite-core';
+
+  export const repositories = sqliteTable('repositories', {
+    id: integer('id').primaryKey({ autoIncrement: true }),
+    name: text('name').notNull(),
+    fullName: text('full_name').notNull().unique(),
+    cloneUrl: text('clone_url').notNull(),
+    localPath: text('local_path'),
+    lastSyncAt: integer('last_sync_at', { mode: 'timestamp' })
+  });
+
+  export const users = sqliteTable('users', {
+    id: integer('id').primaryKey({ autoIncrement: true }),
+    githubId: integer('github_id').unique(),
+    login: text('login').notNull().unique(),
+    name: text('name'),
+    email: text('email'),
+    avatarUrl: text('avatar_url')
+  });
+
+  export const commits = sqliteTable('commits', {
+    id: text('id').primaryKey(),  // SHA
+    repositoryId: integer('repository_id').notNull().references(() => repositories.id),
+    authorId: integer('author_id').references(() => users.id),
+    committerId: integer('committer_id').references(() => users.id),
+    message: text('message'),
+    committedAt: integer('committed_at', { mode: 'timestamp' }).notNull(),
+    additions: integer('additions'),
+    deletions: integer('deletions')
+  });
+  ```
+  - 마이그레이션 스크립트 설정
+  ```typescript
+  // drizzle.config.ts
+  import type { Config } from 'drizzle-kit';
+
+  export default {
+    schema: './src/db/schema.ts',
+    out: './src/db/migrations',
+    driver: 'better-sqlite',
+    dbCredentials: {
+      url: './data/github-metrics.db',
+    },
+  } satisfies Config;
+  ```
+  - 데이터베이스 초기화 및 마이그레이션 스크립트
+  ```typescript
+  // src/db/index.ts
+  import { drizzle } from 'drizzle-orm/better-sqlite3';
+  import Database from 'better-sqlite3';
+  import * as schema from './schema';
+  
+  // SQLite 데이터베이스 연결
+  const sqlite = new Database('./data/github-metrics.db');
+  export const db = drizzle(sqlite, { schema });
+  ```
+
+### Task 1.2: 저장소 관리 모듈 구현
+- **목표**: 타겟 저장소를 효율적으로 로컬에 클론하고 업데이트
+- **상세 내용**:
+  - simple-git 라이브러리를 사용하여 저장소 클론 모듈 구현
+  ```typescript
+  // src/services/repository-manager.ts
+  import simpleGit, { SimpleGit } from 'simple-git';
+  import { mkdir } from 'fs/promises';
+  import { join } from 'path';
+  import { db } from '../db';
+  import { repositories } from '../db/schema';
+  import { eq } from 'drizzle-orm';
+  import { logger } from '../utils/logger';
+
+  export class RepositoryManager {
+    private basePath: string;
+
+    constructor(basePath = './repos') {
+      this.basePath = basePath;
+      this.ensureBaseDirectory();
+    }
+
+    private async ensureBaseDirectory() {
+      try {
+        await mkdir(this.basePath, { recursive: true });
+      } catch (error) {
+        logger.error(`Failed to create base directory: ${error}`);
+      }
+    }
+
+    async ensureRepository(repoInfo: typeof repositories.$inferSelect) {
+      const repoPath = join(this.basePath, repoInfo.name);
+      const git: SimpleGit = simpleGit();
+
+      try {
+        // 이미 클론되어 있는지 확인
+        await git.checkIsRepo(join(repoPath, '.git'));
+        
+        // 이미 클론되어 있으면 업데이트
+        logger.info(`Updating repository ${repoInfo.fullName}...`);
+        const repo = git.cwd(repoPath);
+        await repo.fetch('origin');
+        await repo.pull();
+        logger.info(`Repository ${repoInfo.fullName} updated`);
+      } catch {
+        // 저장소 클론
+        logger.info(`Cloning repository ${repoInfo.fullName}...`);
+        await git.clone(repoInfo.cloneUrl, repoPath);
+        logger.info(`Repository ${repoInfo.fullName} cloned`);
+      }
+
+      // DB 업데이트
+      await db.update(repositories)
+        .set({ 
+          localPath: repoPath, 
+          lastSyncAt: new Date() 
+        })
+        .where(eq(repositories.id, repoInfo.id));
+
+      return repoPath;
+    }
+  }
+  ```
+
+## Phase 2: 데이터 수집 모듈 개발 (2주)
+
+### Task 2.1: Git 기반 커밋 데이터 수집기 구현
+- **목표**: 로컬 Git 저장소에서 커밋 데이터 추출
+- **상세 내용**:
+  - simple-git을 사용하여 커밋 이력 분석
+  - 증분 수집 구현으로 마지막 동기화 이후 변경사항만 가져오기
+  - 작성자 정보, 변경 통계 등 수집
+  ```typescript
+  // src/services/git-collector.ts
+  import simpleGit, { SimpleGit } from 'simple-git';
+  import { db } from '../db';
+  import { commits, users, repositories } from '../db/schema';
+  import { eq } from 'drizzle-orm';
+  import { logger } from '../utils/logger';
+
+  export class GitCommitCollector {
+    async collectCommits(repoId: number, repoPath: string, since?: Date, branches?: string[]) {
+      logger.info(`Collecting commits for repository ID ${repoId}...`);
+      
+      const git: SimpleGit = simpleGit(repoPath);
+      
+      // 수집할 브랜치 결정
+      if (!branches || branches.length === 0) {
+        const currentBranch = await git.revparse(['--abbrev-ref', 'HEAD']);
+        branches = [currentBranch];
+      }
+      
+      let totalCommits = 0;
+      let newCommits = 0;
+      
+      for (const branch of branches) {
+        // 로그 옵션 구성
+        const logOptions: string[] = [branch, '--numstat'];
+        if (since) {
+          logOptions.push(`--since=${since.toISOString()}`);
+        }
+        
+        // 커밋 로그 가져오기
+        const logs = await git.log(logOptions);
+        totalCommits += logs.total;
+        
+        for (const commit of logs.all) {
+          // 이미 DB에 있는지 확인
+          const existingCommit = await db.select()
+            .from(commits)
+            .where(eq(commits.id, commit.hash))
+            .get();
+          
+          if (existingCommit) continue;
+          
+          // 작성자 정보 처리
+          const author = await this.getOrCreateUser(commit.author_name, commit.author_email);
+          
+          // 변경 통계 파싱
+          const stats = { additions: 0, deletions: 0 };
+          for (const numStat of commit.diff?.numstat || []) {
+            stats.additions += parseInt(numStat.additions) || 0;
+            stats.deletions += parseInt(numStat.deletions) || 0;
+          }
+          
+          // 커밋 저장
+          await db.insert(commits).values({
+            id: commit.hash,
+            repositoryId: repoId,
+            authorId: author?.id,
+            message: commit.message,
+            committedAt: new Date(commit.date),
+            additions: stats.additions,
+            deletions: stats.deletions
+          });
+          
+          newCommits++;
+          
+          // 로깅
+          if (newCommits % 100 === 0) {
+            logger.info(`Processed ${newCommits} new commits`);
+          }
+        }
+      }
+      
+      logger.info(`Commit collection complete. Total: ${totalCommits}, New: ${newCommits}`);
+      return newCommits;
+    }
+    
+    private async getOrCreateUser(name: string, email: string) {
+      // 사용자 조회 또는 생성
+      let user = await db.select()
+        .from(users)
+        .where(eq(users.email, email))
+        .get();
+      
+      if (!user) {
+        const result = await db.insert(users)
+          .values({
+            name,
+            email,
+            login: email.split('@')[0] // 임시 로그인명
+          })
+          .returning();
+        
+        user = result[0];
+      }
+      
+      return user;
+    }
+  }
+  ```
+
+### Task 2.2: GitHub API 연동 모듈 구현
+- **목표**: GitHub GraphQL API를 통한 효율적인 PR 및 사용자 데이터 수집
+- **상세 내용**:
+  - Octokit 라이브러리와 GraphQL 쿼리를 사용하여 데이터 효율적으로 가져오기
+  - API 호출 최적화 및 레이트 리밋 관리
+  ```typescript
+  // src/services/github-api.ts
+  import { Octokit } from 'octokit';
+  import { db } from '../db';
+  import { repositories, pullRequests, prReviews, users } from '../db/schema';
+  import { eq } from 'drizzle-orm';
+  import { logger } from '../utils/logger';
+  
+  export class GitHubAPIClient {
+    private octokit: Octokit;
+    private remainingPoints = 5000; // GraphQL 기본 할당량
+    
+    constructor(token: string) {
+      this.octokit = new Octokit({ auth: token });
+    }
+    
+    async fetchPullRequests(owner: string, repo: string, since?: Date, batchSize = 25) {
+      logger.info(`Fetching PRs for ${owner}/${repo}...`);
+      
+      // 저장소 정보 조회
+      const repoInfo = await db.select()
+        .from(repositories)
+        .where(eq(repositories.fullName, `${owner}/${repo}`))
+        .get();
+      
+      if (!repoInfo) {
+        logger.error(`Repository ${owner}/${repo} not found in DB`);
+        return 0;
+      }
+      
+      // GraphQL 쿼리
+      const query = `
+        query($owner: String!, $name: String!, $prCount: Int!, $prCursor: String) {
+          repository(owner: $owner, name: $name) {
+            pullRequests(first: $prCount, after: $prCursor, states: [MERGED, CLOSED, OPEN], orderBy: {field: CREATED_AT, direction: DESC}) {
+              pageInfo {
+                hasNextPage
+                endCursor
+              }
+              nodes {
+                number
+                title
+                state
+                createdAt
+                mergedAt
+                closedAt
+                additions
+                deletions
+                changedFiles
+                author {
+                  login
+                  ... on User {
+                    id
+                    name
+                    email
+                  }
+                }
+                reviews(first: 10) {
+                  nodes {
+                    state
+                    author {
+                      login
+                    }
+                    createdAt
+                    comments {
+                      totalCount
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      `;
+      
+      // 페이지네이션 변수
+      let hasNextPage = true;
+      let cursor: string | null = null;
+      let totalPRs = 0;
+      let newPRs = 0;
+      
+      // PR 수집 반복
+      while (hasNextPage) {
+        try {
+          // API 호출 전 레이트 리밋 확인
+          await this.checkRateLimit();
+          
+          const response = await this.octokit.graphql(query, {
+            owner,
+            name: repo,
+            prCount: batchSize,
+            prCursor: cursor
+          });
+          
+          // @ts-ignore - 타입 단순화를 위해
+          const prsData = response.repository.pullRequests;
+          
+          // 페이지네이션 정보 업데이트
+          // @ts-ignore
+          hasNextPage = prsData.pageInfo.hasNextPage;
+          // @ts-ignore
+          cursor = hasNextPage ? prsData.pageInfo.endCursor : null;
+          
+          // PR 데이터 처리
+          // @ts-ignore
+          for (const pr of prsData.nodes) {
+            totalPRs++;
+            
+            // since 필터 적용
+            if (since && new Date(pr.createdAt) < since) {
+              hasNextPage = false;
+              break;
+            }
+            
+            // 이하 PR 및 리뷰 데이터 저장 로직...
+            // (코드 길이 제한으로 상세 구현은 생략)
+            newPRs++;
+          }
+          
+          logger.info(`Processed ${newPRs} PRs so far`);
+        } catch (error) {
+          logger.error(`Error fetching PRs: ${error}`);
+          break;
+        }
+      }
+      
+      logger.info(`PR collection complete. Total: ${totalPRs}, New: ${newPRs}`);
+      return newPRs;
+    }
+    
+    private async checkRateLimit() {
+      if (this.remainingPoints < 100) {
+        logger.warn(`GitHub API rate limit low: ${this.remainingPoints} points remaining. Waiting...`);
+        await new Promise(resolve => setTimeout(resolve, 60000)); // 1분 대기
+        
+        // 레이트 리밋 정보 갱신
+        const { data } = await this.octokit.rest.rateLimit.get();
+        this.remainingPoints = data.resources.graphql.remaining;
+        
+        logger.info(`Rate limit updated: ${this.remainingPoints} points remaining`);
+      }
+    }
+  }
+  ```
+
+### Task 2.3: 증분 데이터 수집 및 동기화 관리자 구현
+- **목표**: 효율적인 증분 데이터 수집 시스템 개발
+- **상세 내용**:
+  - 저장소별 마지막 동기화 시간 기반 증분 업데이트
+  - Git 데이터와 GitHub API 데이터 통합
+  - 데이터 일관성 확인 메커니즘 구현
+  ```typescript
+  // src/services/sync-manager.ts
+  import { RepositoryManager } from './repository-manager';
+  import { GitCommitCollector } from './git-collector';
+  import { GitHubAPIClient } from './github-api';
+  import { db } from '../db';
+  import { repositories, syncStatus } from '../db/schema';
+  import { eq } from 'drizzle-orm';
+  import { logger } from '../utils/logger';
+  
+  export class SyncManager {
+    constructor(
+      private repoManager: RepositoryManager,
+      private gitCollector: GitCommitCollector,
+      private githubApi: GitHubAPIClient
+    ) {}
+    
+    async syncRepository(repoFullName: string, forceFull = false) {
+      logger.info(`Starting sync for repository ${repoFullName}`);
+      
+      // 저장소 정보 조회
+      const repo = await db.select()
+        .from(repositories)
+        .where(eq(repositories.fullName, repoFullName))
+        .get();
+      
+      if (!repo) {
+        logger.error(`Repository ${repoFullName} not found`);
+        return false;
+      }
+      
+      // 마지막 동기화 시간 확인
+      let sinceDate: Date | undefined = undefined;
+      if (!forceFull && repo.lastSyncAt) {
+        // 약간의 중복 허용 (데이터 누락 방지)
+        sinceDate = new Date(repo.lastSyncAt.getTime() - 3600000); // 1시간 이전
+        logger.info(`Incremental sync: since ${sinceDate}`);
+      } else {
+        logger.info('Full sync');
+      }
+      
+      // 1. 저장소 클론/업데이트
+      const repoPath = await this.repoManager.ensureRepository(repo);
+      if (!repoPath) return false;
+      
+      // 2. Git 커밋 데이터 수집
+      const commitsCount = await this.gitCollector.collectCommits(
+        repo.id,
+        repoPath,
+        sinceDate
+      );
+      logger.info(`Collected ${commitsCount} new commits`);
+      
+      // 3. PR 및 리뷰 데이터 수집
+      const [owner, name] = repoFullName.split('/');
+      const prsCount = await this.githubApi.fetchPullRequests(
+        owner,
+        name,
+        sinceDate
+      );
+      logger.info(`Collected ${prsCount} new PRs`);
+      
+      // 4. 동기화 상태 업데이트
+      await db.update(repositories)
+        .set({ lastSyncAt: new Date() })
+        .where(eq(repositories.id, repo.id));
+      
+      // 5. 동기화 이력 기록
+      await db.insert(syncStatus).values({
+        repositoryId: repo.id,
+        syncedAt: new Date(),
+        commitsCount,
+        prsCount,
+        syncType: forceFull ? 'full' : 'incremental'
+      });
+      
+      logger.info(`Sync complete for ${repoFullName}`);
+      return true;
+    }
+  }
+  ```
+
+## Phase 3: 지표 계산 및 분석 엔진 (2주)
+
+### Task 3.1: 핵심 지표 계산 모듈 구현
+- **목표**: 수집된 데이터로부터 핵심 지표 계산
+- **상세 내용**:
+  - 개인별 지표: 커밋 수, PR 수, 리뷰 참여도 등
+  - 프로젝트 지표: 변경 빈도, PR 리드 타임, 병합 비율 등
+  - DORA 메트릭 계산
+  ```typescript
+  // src/services/metrics-calculator.ts
+  import { db } from '../db';
+  import { commits, pullRequests, prReviews, metricsCache } from '../db/schema';
+  import { eq, and, gte, lte, sql } from 'drizzle-orm';
+  import { logger } from '../utils/logger';
+  
+  export class MetricsCalculator {
+    async calculateDeveloperMetrics(userId: number, repoId?: number, startDate?: Date, endDate?: Date) {
+      if (!endDate) endDate = new Date();
+      if (!startDate) startDate = new Date(endDate.getTime() - 90 * 24 * 60 * 60 * 1000); // 90일
+      
+      // 캐시 키 생성
+      const cacheKey = `dev_metrics_${userId}_${repoId || 'all'}_${startDate.toISOString()}_${endDate.toISOString()}`;
+      
+      // 캐시 확인
+      const cached = await this.getFromCache(cacheKey);
+      if (cached) return cached;
+      
+      // 커밋 지표 쿼리
+      let commitQuery = db.select({
+        commitCount: sql`count(*)`,
+        totalAdditions: sql`sum(${commits.additions})`,
+        totalDeletions: sql`sum(${commits.deletions})`,
+        activeDays: sql`count(distinct date(${commits.committedAt}))`
+      })
+      .from(commits)
+      .where(
+        and(
+          eq(commits.authorId, userId),
+          gte(commits.committedAt, startDate),
+          lte(commits.committedAt, endDate)
+        )
+      );
+      
+      if (repoId) {
+        commitQuery = commitQuery.where(eq(commits.repositoryId, repoId));
+      }
+      
+      // PR 지표 쿼리
+      let prQuery = db.select({
+        prCount: sql`count(*)`,
+        mergedPrs: sql`sum(case when ${pullRequests.state} = 'MERGED' then 1 else 0 end)`,
+        prAdditions: sql`sum(${pullRequests.additions})`,
+        prDeletions: sql`sum(${pullRequests.deletions})`,
+        avgLeadTime: sql`avg(case when ${pullRequests.mergedAt} is not null then 
+                          julianday(${pullRequests.mergedAt}) - julianday(${pullRequests.createdAt}) 
+                          else null end) * 24`
+      })
+      .from(pullRequests)
+      .where(
+        and(
+          eq(pullRequests.authorId, userId),
+          gte(pullRequests.createdAt, startDate),
+          lte(pullRequests.createdAt, endDate)
+        )
+      );
+      
+      if (repoId) {
+        prQuery = prQuery.where(eq(pullRequests.repositoryId, repoId));
+      }
+      
+      // 실행 및 결과 조합
+      // (상세 구현은 생략)
+      
+      // 최종 지표 계산 및 반환
+      // (상세 구현은 생략)
+      
+      // 캐시에 저장
+      await this.saveToCache(cacheKey, metrics, 24); // 24시간 유효
+      
+      return metrics;
+    }
+    
+    async calculateProjectMetrics(repoId: number, startDate?: Date, endDate?: Date) {
+      // 프로젝트 지표 계산 로직
+      // (구현 생략)
+    }
+    
+    private async getFromCache(key: string) {
+      // 캐시에서 지표 조회
+      const cacheEntry = await db.select()
+        .from(metricsCache)
+        .where(
+          and(
+            eq(metricsCache.cacheKey, key),
+            gte(metricsCache.expiresAt, new Date())
+          )
+        )
+        .get();
+      
+      return cacheEntry?.data as any;
+    }
+    
+    private async saveToCache(key: string, data: any, hoursValid = 24) {
+      // 캐시에 저장 로직
+      // (구현 생략)
+    }
+  }
+  ```
+
+### Task 3.2: 멀티스레딩 작업 관리자 구현
+- **목표**: Web Worker를 활용한 병렬 처리 구현
+- **상세 내용**:
+  - Node.js Worker Threads를 사용한 병렬 처리
+  - 작업 큐 설계 및 작업 분배
+  - 결과 집계 및 오류 처리
+  ```typescript
+  // src/services/worker-manager.ts
+  import { Worker } from 'worker_threads';
+  import { logger } from '../utils/logger';
+  import path from 'path';
+  
+  export class WorkerManager {
+    private maxWorkers: number;
+    
+    constructor(maxWorkers = 4) {
+      this.maxWorkers = maxWorkers;
+    }
+    
+    async processRepositories(repositories: any[], syncManager: any, forceFull = false) {
+      logger.info(`Processing ${repositories.length} repositories with ${this.maxWorkers} workers`);
+      
+      const results = {
+        total: repositories.length,
+        success: 0,
+        failed: 0,
+        details: []
+      };
+      
+      // 작업 큐 생성
+      const tasks = repositories.map(repo => ({
+        type: 'sync_repo',
+        repoFullName: repo.fullName,
+        forceFull
+      }));
+      
+      // 병렬 처리
+      const taskResults = await this.runTasksInParallel(tasks);
+      
+      // 결과 처리
+      for (const result of taskResults) {
+        if (result.success) {
+          results.success++;
+        } else {
+          results.failed++;
+        }
+        
+        results.details.push({
+          repository: result.repoFullName,
+          status: result.success ? 'success' : 'failed',
+          error: result.error
+        });
+      }
+      
+      logger.info(`Processing complete: ${results.success} success, ${results.failed} failed`);
+      return results;
+    }
+    
+    private async runTasksInParallel(tasks: any[]) {
+      // 작업 청크로 나누기
+      const chunks = this.chunkArray(tasks, Math.ceil(tasks.length / this.maxWorkers));
+      
+      // 워커 생성 및 작업 실행
+      const results = await Promise.all(chunks.map(chunk => {
+        return new Promise((resolve) => {
+          const worker = new Worker(path.resolve(__dirname, '../workers/sync-worker.js'), {
+            workerData: { tasks: chunk }
+          });
+          
+          worker.on('message', resolve);
+          worker.on('error', (err) => {
+            logger.error(`Worker error: ${err}`);
+            resolve(chunk.map(task => ({
+              ...task,
+              success: false,
+              error: err.message
+            })));
+          });
+        });
+      }));
+      
+      // 결과 병합
+      return results.flat();
+    }
+    
+    private chunkArray(array: any[], size: number) {
+      const chunks = [];
+      for (let i = 0; i < array.length; i += size) {
+        chunks.push(array.slice(i, i + size));
+      }
+      return chunks;
+    }
+  }
+  ```
+
+## Phase 4: 프론트엔드 개발 (3주)
+
+### Task 4.1: 대시보드 UI 컴포넌트 개발
+- **목표**: shadcn/ui와 Tailwind CSS를 활용한 대시보드 UI 구현
+- **상세 내용**:
+  - 기본 레이아웃 및 네비게이션 구조 설계
+  - 재사용 가능한 UI 컴포넌트 개발
+  - 데이터 필터링 및 검색 컴포넌트 구현
+  - 필수 대시보드 컴포넌트:
+    - 개요 대시보드
+    - 개발자 지표 뷰
+    - 프로젝트 지표 뷰
+    - 비교 분석 뷰
+  ```tsx
+  // src/components/dashboard/DashboardLayout.tsx 예시
+  import { useState } from 'react';
+  import { Tabs, TabsContent, TabsList, TabsTrigger } from '../ui/tabs';
+  import { Card, CardContent, CardHeader, CardTitle } from '../ui/card';
+  import { 
+    LineChart, BarChart, PieChart, RadarChart,
+    Line, Bar, Pie, Radar
+  } from 'recharts';
+  import { DateRangePicker } from '../ui/date-range-picker';
+  import { Button } from '../ui/button';
+  import { GitBranch, Users, RefreshCw, Download } from 'lucide-react';
+  
+  export const DashboardLayout = () => {
+    const [dateRange, setDateRange] = useState({
+      from: new Date(Date.now() - 90 * 24 * 60 * 60 * 1000),
+      to: new Date()
+    });
+    
+    // 상태 및 핸들러 정의...
+    
+    return (
+      <div className="container mx-auto p-4">
+        <header className="flex justify-between items-center mb-6">
+          <h1 className="text-2xl font-bold">GitHub 생산성 대시보드</h1>
+          
+          <div className="flex items-center gap-4">
+            <DateRangePicker
+              from={dateRange.from}
+              to={dateRange.to}
+              onSelect={setDateRange}
+            />
+            <Button variant="outline" size="icon">
+              <RefreshCw className="h-4 w-4" />
+            </Button>
+            <Button variant="outline" size="icon">
+              <Download className="h-4 w-4" />
+            </Button>
+          </div>
+        </header>
+        
+        <Tabs defaultValue="overview" className="space-y-4">
+          <TabsList>
+            <TabsTrigger value="overview">개요</TabsTrigger>
+            <TabsTrigger value="developers">개발자</TabsTrigger>
+            <TabsTrigger value="projects">프로젝트</TabsTrigger>
+            <TabsTrigger value="comparison">비교 분석</TabsTrigger>
+          </TabsList>
+          
+          <TabsContent value="overview" className="space-y-4">
+            {/* 스탯 카드 */}
+            <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+              <StatCard
+                title="총 커밋"
+                value={287}
+                change={12}
+                icon={<GitBranch className="h-4 w-4" />}
+              />
+              {/* 다른 스탯 카드들... */}
+            </div>
+            
+            {/* 차트 등 다른 컴포넌트들... */}
+          </TabsContent>
+          
+          {/* 다른 탭 콘텐츠들... */}
+        </Tabs>
+      </div>
+    );
+  };
+  
+  // StatCard 컴포넌트
+  const StatCard = ({ title, value, change, icon }) => (
+    <Card>
+      <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+        <CardTitle className="text-sm font-medium">{title}</CardTitle>
+        {icon}
+      </CardHeader>
+      <CardContent>
+        <div className="text-2xl font-bold">{value}</div>
+        <p className={`text-xs ${change >= 0 ? 'text-green-500' : 'text-red-500'}`}>
+          {change >= 0 ? '+' : ''}{change}% 전월 대비
+        </p>
+      </CardContent>
+    </Card>
+  );
+  ```
+
+### Task 4.2: 데이터 시각화 구현
+- **목표**: 차트 및 그래프로 지표를 시각화
+- **상세 내용**:
+  - 시계열 차트: 커밋 활동, PR 추이 등
+  - 막대 그래프: 개발자별 기여도, 프로젝트별 지표 등
+  - 레이더 차트: DORA 메트릭 비교
+  - 히트맵: 기여 활동 패턴
+  ```tsx
+  // src/components/charts/CommitActivityChart.tsx 예시
+  import { useState, useEffect } from 'react';
+  import { Card, CardContent, CardHeader, CardTitle } from '../ui/card';
+  import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
+  import { getCommitActivity } from '../../api/metrics';
+  
+  export const CommitActivityChart = ({ repositoryId, dateRange }) => {
+    const [data, setData] = useState([]);
+    const [loading, setLoading] = useState(false);
+    const [error, setError] = useState(null);
+    
+    useEffect(() => {
+      const fetchData = async () => {
+        setLoading(true);
+        try {
+          const result = await getCommitActivity(repositoryId, dateRange.from, dateRange.to);
+          setData(result);
+          setError(null);
+        } catch (err) {
+          setError(err.message);
+        } finally {
+          setLoading(false);
+        }
+      };
+      
+      fetchData();
+    }, [repositoryId, dateRange]);
+    
+    return (
+      <Card>
+        <CardHeader>
+          <CardTitle>커밋 활동</CardTitle>
+        </CardHeader>
+        <CardContent>
+          {loading && <p>로딩 중...</p>}
+          {error && <p className="text-red-500">오류: {error}</p>}
+          
+          {!loading && !error && (
+            <ResponsiveContainer width="100%" height={300}>
+              <AreaChart data={data}>
+                <CartesianGrid strokeDasharray="3 3" />
+                <XAxis dataKey="date" />
+                <YAxis />
+                <Tooltip />
+                <Area type="monotone" dataKey="commits" stroke="#8884d8" fill="#8884d8" fillOpacity={0.6} />
+              </AreaChart>
+            </ResponsiveContainer>
+          )}
+        </CardContent>
+      </Card>
+    );
+  };
+  ```
+
+### Task 4.3: API 연동 및 상태 관리 구현
+- **목표**: 프론트엔드와 백엔드 연동 로직 구현
+- **상세 내용**:
+  - API 클라이언트 구현
+  - 데이터 페칭 훅 개발
+  - 상태 관리 (React Query 또는 유사 라이브러리)
+  - 오류 처리 및 로딩 상태 관리
+  ```tsx
+  // src/api/client.ts 예시
+  import axios from 'axios';
+
+  const apiClient = axios.create({
+    baseURL: '/api',
+    timeout: 30000
+  });
+  
+  export const fetchRepositories = async () => {
+    const { data } = await apiClient.get('/repositories');
+    return data;
+  };
+  
+  export const syncRepository = async (repoFullName, forceFull = false) => {
+    const { data } = await apiClient.post('/sync', {
+      repository: repoFullName,
+      forceFull
+    });
+    return data;
+  };
+  
+  export const getDeveloperMetrics = async (developerId, filters = {}) => {
+    const { data } = await apiClient.get(`/metrics/developer/${developerId}`, {
+      params: filters
+    });
+    return data;
+  };
+  
+  // 다른 API 함수들...
+  ```
+
+### Task 4.4: 설정 및 관리 페이지 구현
+- **목표**: 시스템 설정 및 데이터 관리 UI 개발
+- **상세 내용**:
+  - 저장소 추가/제거 인터페이스
+  - 동기화 설정 및 스케줄 관리
+  - 데이터 새로고침 및 캐시 관리 UI
+  - 기본 설정 관리 (API 토큰, 저장 경로 등)
+
+## Phase 5: 백엔드 API 및 통합 (1-2주)
+
+### Task 5.1: Express API 서버 구현
+- **목표**: REST API 엔드포인트 개발
+- **상세 내용**:
+  - Express 서버 설정
+  - API 라우트 정의
+  - 컨트롤러 구현 (저장소, 지표, 동기화 등)
+  - 미들웨어 구현 (인증, 로깅, 오류 처리)
+  ```typescript
+  // src/server/index.ts 예시
+  import express from 'express';
+  import cors from 'cors';
+  import helmet from 'helmet';
+  import { repositoryRoutes } from './routes/repository';
+  import { metricsRoutes } from './routes/metrics';
+  import { syncRoutes } from './routes/sync';
+  import { errorHandler } from './middleware/error-handler';
+  import { logger } from '../utils/logger';
+  
+  const app = express();
+  const PORT = process.env.PORT || 3001;
+  
+  // 미들웨어
+  app.use(helmet());
+  app.use(cors());
+  app.use(express.json());
+  
+  // 로깅 미들웨어
+  app.use((req, res, next) => {
+    logger.info(`${req.method} ${req.url}`);
+    next();
+  });
+  
+  // 라우트
+  app.use('/api/repositories', repositoryRoutes);
+  app.use('/api/metrics', metricsRoutes);
+  app.use('/api/sync', syncRoutes);
+  
+  // 정적 파일 서빙 (빌드된 Vite 앱)
+  app.use(express.static('dist'));
+  
+  // 모든 경로를 SPA로 리다이렉트
+  app.get('*', (req, res) => {
+    res.sendFile('dist/index.html', { root: '.' });
+  });
+  
+  // 오류 처리
+  app.use(errorHandler);
+  
+  // 서버 시작
+  app.listen(PORT, () => {
+    logger.info(`Server running on port ${PORT}`);
+  });
+  ```
+
+### Task 5.2: 백그라운드 작업 관리자 구현
+- **목표**: 데이터 수집 및 분석 자동화
+- **상세 내용**:
+  - 작업 스케줄러 구현 (node-cron)
+  - 주기적 데이터 수집 작업 설정
+  - 작업 상태 모니터링 및 로깅
+  ```typescript
+  // src/server/scheduler.ts 예시
+  import cron from 'node-cron';
+  import { db } from '../db';
+  import { repositories } from '../db/schema';
+  import { SyncManager } from '../services/sync-manager';
+  import { RepositoryManager } from '../services/repository-manager';
+  import { GitCommitCollector } from '../services/git-collector';
+  import { GitHubAPIClient } from '../services/github-api';
+  import { logger } from '../utils/logger';
+  import { eq, isNull, or, lt } from 'drizzle-orm';
+  
+  export class SchedulerService {
+    private syncManager: SyncManager;
+    
+    constructor() {
+      const repoManager = new RepositoryManager();
+      const gitCollector = new GitCommitCollector();
+      const githubApi = new GitHubAPIClient(process.env.GITHUB_TOKEN);
+      
+      this.syncManager = new SyncManager(repoManager, gitCollector, githubApi);
+    }
+    
+    initialize() {
+      // 매일 오전 1시에 실행
+      cron.schedule('0 1 * * *', () => {
+        this.syncAllRepositories();
+      });
+      
+      // 매주 일요일 오전 2시에 메트릭 캐시 정리
+      cron.schedule('0 2 * * 0', () => {
+        this.cleanupMetricsCache();
+      });
+      
+      logger.info('Scheduler initialized');
+    }
+    
+    async syncAllRepositories() {
+      logger.info('Starting scheduled sync for all repositories');
+      
+      try {
+        // 동기화가 필요한 저장소 찾기 (마지막 동기화가 1일 이상 지난 것)
+        const oneDayAgo = new Date();
+        oneDayAgo.setDate(oneDayAgo.getDate() - 1);
+        
+        const reposToSync = await db.select()
+          .from(repositories)
+          .where(
+            or(
+              isNull(repositories.lastSyncAt),
+              lt(repositories.lastSyncAt, oneDayAgo)
+            )
+          );
+        
+        logger.info(`Found ${reposToSync.length} repositories to sync`);
+        
+        // 동기화 실행
+        for (const repo of reposToSync) {
+          try {
+            await this.syncManager.syncRepository(repo.fullName);
+            logger.info(`Successfully synced ${repo.fullName}`);
+          } catch (error) {
+            logger.error(`Failed to sync ${repo.fullName}: ${error}`);
+          }
+        }
+        
+        logger.info('Scheduled sync completed');
+      } catch (error) {
+        logger.error(`Scheduled sync failed: ${error}`);
+      }
+    }
+    
+    async cleanupMetricsCache() {
+      // 캐시 정리 로직
+      // (구현 생략)
+      logger.info('Metrics cache cleanup completed');
+    }
+  }
+  ```
+
+### Task 5.3: 라우트 핸들러 및 컨트롤러 구현
+- **목표**: API 요청을 처리하는 컨트롤러 개발
+- **상세 내용**:
+  - 저장소 관리 API (추가, 수정, 삭제, 조회)
+  - 지표 계산 및 조회 API
+  - 동기화 및 작업 관리 API
+  ```typescript
+  // src/server/routes/metrics.ts 예시
+  import express from 'express';
+  import { MetricsCalculator } from '../../services/metrics-calculator';
+  import { logger } from '../../utils/logger';
+  
+  const router = express.Router();
+  const metricsCalculator = new MetricsCalculator();
+  
+  // 개발자 지표 조회
+  router.get('/developer/:id', async (req, res, next) => {
+    try {
+      const userId = parseInt(req.params.id);
+      const { repoId, startDate, endDate } = req.query;
+      
+      const repoIdParam = repoId ? parseInt(repoId as string) : undefined;
+      const startDateParam = startDate ? new Date(startDate as string) : undefined;
+      const endDateParam = endDate ? new Date(endDate as string) : undefined;
+      
+      const metrics = await metricsCalculator.calculateDeveloperMetrics(
+        userId,
+        repoIdParam,
+        startDateParam,
+        endDateParam
+      );
+      
+      res.json(metrics);
+    } catch (error) {
+      next(error);
+    }
+  });
+  
+  // 프로젝트 지표 조회
+  router.get('/project/:id', async (req, res, next) => {
+    try {
+      const repoId = parseInt(req.params.id);
+      const { startDate, endDate } = req.query;
+      
+      const startDateParam = startDate ? new Date(startDate as string) : undefined;
+      const endDateParam = endDate ? new Date(endDate as string) : undefined;
+      
+      const metrics = await metricsCalculator.calculateProjectMetrics(
+        repoId,
+        startDateParam,
+        endDateParam
+      );
+      
+      res.json(metrics);
+    } catch (error) {
+      next(error);
+    }
+  });
+  
+  // 비교 분석 조회
+  router.post('/compare', async (req, res, next) => {
+    try {
+      const { type, ids, startDate, endDate } = req.body;
+      
+      // 비교 로직 구현
+      // (생략)
+      
+      res.json(comparisonResults);
+    } catch (error) {
+      next(error);
+    }
+  });
+  
+  export const metricsRoutes = router;
+  ```
+
+## Phase 6: 테스트 및 배포 (1주)
+
+### Task 6.1: 테스트 작성 및 실행
+- **목표**: 코드 품질 및 안정성 보장
+- **상세 내용**:
+  - Vitest를 사용한 유닛 테스트 작성
+  - 테스트 환경 설정 (SQLite 메모리 DB 등)
+  - 주요 모듈별 테스트 케이스 작성
+  ```typescript
+  // src/services/__tests__/git-collector.test.ts 예시
+  import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+  import { GitCommitCollector } from '../git-collector';
+  import * as mockRepo from './mocks/repository-data';
+  
+  // DB 모킹
+  vi.mock('../../db', () => ({
+    db: {
+      select: vi.fn(() => ({
+        from: vi.fn(() => ({
+          where: vi.fn(() => ({
+            get: vi.fn()
+          }))
+        }))
+      })),
+      insert: vi.fn(() => ({
+        values: vi.fn(() => ({
+          returning: vi.fn(() => [{ id: 1 }])
+        }))
+      }))
+    }
+  }));
+  
+  // simple-git 모킹
+  vi.mock('simple-git', () => ({
+    default: () => ({
+      log: vi.fn(() => Promise.resolve(mockRepo.commitLogMock))
+    })
+  }));
+  
+  describe('GitCommitCollector', () => {
+    let collector: GitCommitCollector;
+    
+    beforeEach(() => {
+      collector = new GitCommitCollector();
+    });
+    
+    afterEach(() => {
+      vi.clearAllMocks();
+    });
+    
+    it('should collect new commits from repository', async () => {
+      const result = await collector.collectCommits(1, '/fake/path');
+      
+      expect(result).toBe(3); // mockRepo에 3개의 커밋이 있다고 가정
+    });
+    
+    // 다른 테스트 케이스들...
+  });
+  ```
+
+### Task 6.2: 배포 준비 및 문서화
+- **목표**: 배포 및 운영을 위한 준비
+- **상세 내용**:
+  - README 및 사용 설명서 작성
+  - 환경 변수 및 설정 파일 구성
+  - 빌드 및 배포 스크립트 작성
+  - 데이터 백업 전략 수립

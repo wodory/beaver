@@ -1,31 +1,41 @@
 {
   "repositories": [
     {
-      "owner": "n8n-io",
-      "name": "n8n",
-      "description": "n8n - 오픈 소스 자동화 및 워크플로우 도구 플랫폼"
+      "id": 1,
+      "name": "repo1",
+      "fullName": "owner/repo1",
+      "type": "github",
+      "cloneUrl": "https://github.com/owner/repo1.git",
+      "apiUrl": "https://api.github.com"
     },
     {
-      "owner": "docmost",
-      "name": "docmost",
-      "description": "docmost - 팀을 위한 오픈 소스 문서 관리 플랫폼"
+      "id": 2,
+      "name": "repo2",
+      "fullName": "owner/repo2",
+      "type": "github",
+      "cloneUrl": "https://github.com/owner/repo2.git",
+      "apiUrl": "https://api.github.com"
     },
     {
-      "owner": "wbkd",
-      "name": "react-flow",
-      "description": "React Flow - React를 위한 고도로 커스터마이징 가능한 인터랙티브 노드 기반 플로우 다이어그램 라이브러리"
+      "id": 3,
+      "name": "project1",
+      "fullName": "company/project1",
+      "type": "github-enterprise",
+      "cloneUrl": "https://git.company.com/company/project1.git",
+      "apiUrl": "https://git.company.com/api/v3"
     },
     {
-      "owner": "vitest-dev",
-      "name": "vitest",
-      "description": "Vitest - Vite에서 제공하는 차세대 테스팅 프레임워크"
-    },
-    {
-      "owner": "facebook",
-      "name": "react",
-      "description": "React - Facebook의 React 라이브러리"
+      "id": 4,
+      "name": "project2",
+      "fullName": "company/project2",
+      "type": "github-enterprise",
+      "cloneUrl": "https://git.company.com/company/project2.git",
+      "apiUrl": "https://git.company.com/api/v3"
     }
   ],
+  "defaultPaths": {
+    "repoStorage": "./repos"
+  },
   "defaultTimeRange": {
     "since": "2024-01-01",
     "until": "2025-03-16"
