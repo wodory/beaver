@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 // App.css는 index.css로 통합되었으므로 import 구문 제거
 import { AppSidebar } from './components/app-sidebar'
 import { SiteHeader } from './components/site-header'
@@ -22,6 +22,7 @@ function App() {
     endDate: new Date(),
     datePreset: '30d'
   })
+  const [windowWidth, setWindowWidth] = useState(window.innerWidth)
 
   const toggleSidebar = () => {
     setIsSidebarCollapsed(!isSidebarCollapsed)
@@ -29,6 +30,21 @@ function App() {
 
   // 사이드바 너비 계산 (접혔을 때와 펼쳤을 때)
   const sidebarWidth = isSidebarCollapsed ? 80 : 250 // 사이드바 컴포넌트의 너비와 일치시켜야 함
+
+  // 브라우저 크기 변경 감지
+  useEffect(() => {
+    const handleResize = () => {
+      setWindowWidth(window.innerWidth)
+    }
+
+    window.addEventListener('resize', handleResize)
+    return () => {
+      window.removeEventListener('resize', handleResize)
+    }
+  }, [])
+
+  // 메인 컨텐츠 영역의 너비 계산
+  const mainContentWidth = windowWidth - sidebarWidth
 
   const handleFilterChange = (filters: FilterState) => {
     console.log('App - handleFilterChange called with:', filters);
@@ -40,7 +56,10 @@ function App() {
     <SidebarProvider>
       <div className="flex h-screen overflow-hidden bg-background">
         <AppSidebar isCollapsed={isSidebarCollapsed} />
-        <div className="flex-1 overflow-auto">
+        <div 
+          className="flex-1 overflow-auto"
+          style={{ width: `${mainContentWidth}px`, maxWidth: '100%' }}
+        >
           <SiteHeader onToggleSidebar={toggleSidebar} title="DORA 메트릭스" />
           <main className="p-4 pt-2">
             <div className="mb-6">
