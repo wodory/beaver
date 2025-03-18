@@ -3,9 +3,11 @@ import { useState, useEffect } from 'react'
 import { AppSidebar } from './components/app-sidebar'
 import { SiteHeader } from './components/site-header'
 import { FilterBar } from './components/metrics/filter-bar'
+import { MetricsDashboard } from './components/metrics/MetricsDashboard'
 import { DoraMetrics } from './components/metrics/dora-metrics'
 import { ExampleMetrics } from './components/metrics/example-metrics'
 import { SidebarProvider } from '@/components/ui/sidebar'
+import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs'
 
 interface FilterState {
   project: string;
@@ -23,6 +25,7 @@ function App() {
     datePreset: '30d'
   })
   const [windowWidth, setWindowWidth] = useState(window.innerWidth)
+  const [activeView, setActiveView] = useState('dashboard') // 'dashboard' 또는 'dora'
 
   const toggleSidebar = () => {
     setIsSidebarCollapsed(!isSidebarCollapsed)
@@ -52,15 +55,27 @@ function App() {
     console.log('App - filterState updated:', filters);
   }
 
+  // 뷰 전환 핸들러
+  const handleViewChange = (view: string) => {
+    setActiveView(view);
+  }
+
   return (
     <SidebarProvider>
       <div className="flex h-screen overflow-hidden bg-background">
-        <AppSidebar isCollapsed={isSidebarCollapsed} />
+        <AppSidebar 
+          isCollapsed={isSidebarCollapsed} 
+          onViewChange={handleViewChange}
+          activeView={activeView}
+        />
         <div 
           className="flex-1 overflow-auto"
           style={{ width: `${mainContentWidth}px`, maxWidth: '100%' }}
         >
-          <SiteHeader onToggleSidebar={toggleSidebar} title="DORA 메트릭스" />
+          <SiteHeader 
+            onToggleSidebar={toggleSidebar} 
+            title={activeView === 'dashboard' ? "GitHub 메트릭스 대시보드" : "DORA 메트릭스"} 
+          />
           <main className="p-4 pt-2">
             <div className="mb-6">
               <FilterBar
@@ -69,16 +84,23 @@ function App() {
               />
             </div>
             
-            <div className="space-y-12">
-              {/* 기존 DORA 메트릭스 */}
-              <DoraMetrics filterState={filterState} />
-
-              {/* 새로운 메트릭스 카드 */}
-              <div className="border-t pt-8">
-                <h2 className="text-lg font-semibold mb-4">새로운 메트릭스 카드</h2>
-                <ExampleMetrics filterState={filterState} />
+            {activeView === 'dashboard' ? (
+              <div className="space-y-6">
+                {/* 메트릭스 대시보드 */}
+                <MetricsDashboard filterState={filterState} />
               </div>
-            </div>
+            ) : (
+              <div className="space-y-12">
+                {/* 기존 DORA 메트릭스 */}
+                <DoraMetrics filterState={filterState} />
+
+                {/* 새로운 메트릭스 카드 */}
+                <div className="border-t pt-8">
+                  <h2 className="text-lg font-semibold mb-4">새로운 메트릭스 카드</h2>
+                  <ExampleMetrics filterState={filterState} />
+                </div>
+              </div>
+            )}
           </main>
         </div>
       </div>

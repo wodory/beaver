@@ -1,0 +1,15 @@
+{
+  "extends": "../tsconfig.json",
+  "compilerOptions": {
+    "outDir": "../dist-github",
+    "rootDir": "../src",
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext"
+  },
+  "include": [
+    "../src/services/github/**/*",
+    "../src/utils/logger.ts",
+    "../src/tests/github-api-test.ts"
+  ],
+  "exclude": ["../node_modules"]
+} 

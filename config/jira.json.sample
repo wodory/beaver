@@ -1,0 +1,6 @@
+{
+  "baseUrl": "https://your-domain.atlassian.net",
+  "username": "your-email@example.com",
+  "apiToken": "your-api-token",
+  "projectKeys": ["PROJ1", "PROJ2", "PROJ3"]
+} 

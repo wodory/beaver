@@ -7,6 +7,10 @@ import { eq } from 'drizzle-orm';
 import fs from 'fs/promises';
 import path from 'path';
 import config from '../../config.json';
+import { GitHubApiCollector } from '../github/GitHubApiCollector';
+import { logger } from '../../utils/logger';
+import { JiraDataCollector } from '../jira/JiraDataCollector';
+import { JiraIssue } from '../jira/IJiraAdapter';
 
 /**
  * 동기화 관리자
@@ -16,11 +20,15 @@ import config from '../../config.json';
 export class SyncManager {
   private gitServiceFactory: GitServiceFactory;
   private commitCollector: GitCommitCollector;
+  private githubApiCollector: GitHubApiCollector;
+  private jiraDataCollector: JiraDataCollector;
   private basePath: string;
   
-  constructor() {
+  constructor(useMockJira: boolean = false) {
     this.gitServiceFactory = GitServiceFactory.getInstance();
     this.commitCollector = new GitCommitCollector();
+    this.githubApiCollector = new GitHubApiCollector();
+    this.jiraDataCollector = new JiraDataCollector(useMockJira);
     this.basePath = config.defaultPaths?.repoStorage || './repos';
   }
   
@@ -86,102 +94,136 @@ export class SyncManager {
   }
   
   /**
-   * 지정된 저장소를 동기화합니다.
-   * 1. 저장소 클론/업데이트
-   * 2. 커밋 데이터 수집
-   * 3. PR 및 리뷰 데이터 수집
-   * 
+   * 저장소를 동기화합니다.
    * @param repoId 저장소 ID
-   * @param forceFull 전체 동기화 여부 (기본값: false, 증분 동기화 수행)
+   * @param forceFull 전체 동기화 여부 (증분 동기화 무시)
+   * @param syncJira JIRA 이슈 동기화 여부
    * @returns 동기화 결과
    */
-  async syncRepository(repoId: number, forceFull: boolean = false): Promise<SyncResult> {
-    const repoInfo = await this.getRepository(repoId);
-    
-    if (!repoInfo) {
-      throw new Error(`ID가 ${repoId}인 저장소를 찾을 수 없습니다.`);
-    }
-    
-    console.log(`저장소 ${repoInfo.fullName} 동기화 시작...`);
-    
+  async syncRepository(repoId: number, forceFull: boolean = false, syncJira: boolean = true): Promise<SyncResult> {
+    const startTime = new Date();
     const result: SyncResult = {
       repositoryId: repoId,
-      repositoryName: repoInfo.fullName,
+      repositoryName: '',
       success: false,
       message: '',
       commitCount: 0,
       pullRequestCount: 0,
       reviewCount: 0,
-      startTime: new Date(),
-      endTime: new Date(),
+      jiraIssueCount: 0,
+      startTime,
+      endTime: startTime,
       errors: []
     };
     
     try {
-      // 1. 저장소 경로 확인 및 생성
+      const repoInfo = await this.getRepository(repoId);
+      if (!repoInfo) {
+        result.message = `ID가 ${repoId}인 저장소를 찾을 수 없습니다.`;
+        result.endTime = new Date();
+        return result;
+      }
+      
+      result.repositoryName = repoInfo.fullName;
+      logger.info(`저장소 동기화 시작: ${repoInfo.fullName}`);
+      
+      // 동기화 기준 시간 설정 (마지막 동기화 시간 또는 전체 동기화)
+      let since: Date | undefined = undefined;
+      if (!forceFull && repoInfo.lastSyncAt) {
+        since = new Date(repoInfo.lastSyncAt);
+        logger.info(`마지막 동기화 시간으로부터 증분 동기화: ${since.toISOString()}`);
+      } else {
+        logger.info('전체 동기화 수행 중...');
+      }
+      
+      // 저장소 경로 확보
       const repoPath = await this.ensureRepositoryPath(repoInfo);
-      repoInfo.localPath = repoPath;
-      
-      // 2. 저장소 클론 또는 업데이트
-      const gitAdapter = this.gitServiceFactory.createAdapter(repoInfo);
-      await gitAdapter.cloneOrUpdateRepository(repoInfo, this.basePath);
-      
-      // 3. 마지막 동기화 시간 가져오기 (증분 동기화용)
-      let since: Date | undefined;
-      if (!forceFull) {
-        const lastSyncQuery = await dbAdapter.select(
-          dbAdapter.db!.select({ lastSyncAt: schema.repositories.lastSyncAt })
-            .from(schema.repositories)
-            .where(eq(schema.repositories.id, repoId))
-        );
-        
-        if (lastSyncQuery.length > 0 && lastSyncQuery[0].lastSyncAt) {
-          since = new Date(lastSyncQuery[0].lastSyncAt);
-          console.log(`마지막 동기화 시간: ${since.toISOString()}`);
-        }
+      if (!repoPath) {
+        throw new Error(`저장소 경로를 생성할 수 없습니다: ${repoInfo.fullName}`);
       }
       
-      // 4. 커밋 데이터 수집 및 저장
-      result.commitCount = await this.commitCollector.collectAndStoreCommits(repoInfo, since);
-      
-      // 5. PR 데이터 수집 및 저장 (Task 2.2 완료 후 구현)
+      // 커밋 데이터 수집
       try {
-        const pullRequests = await gitAdapter.collectPullRequests(repoInfo, since);
-        result.pullRequestCount = await this.storePullRequests(repoInfo, pullRequests);
-        
-        // 6. PR 리뷰 데이터 수집 및 저장
-        let reviewCount = 0;
-        for (const pr of pullRequests) {
-          const reviews = await gitAdapter.collectPullRequestReviews(repoInfo, pr.number);
-          reviewCount += await this.storePullRequestReviews(repoInfo, pr.number, reviews);
-        }
-        result.reviewCount = reviewCount;
+        result.commitCount = await this.commitCollector.collectAndStoreCommits(
+          repoInfo,
+          since
+        );
       } catch (error) {
-        console.error('PR 및 리뷰 데이터 수집 중 오류:', error);
-        result.errors.push(`PR 데이터 오류: ${error}`);
+        const errorMessage = `커밋 데이터 수집 중 오류: ${error}`;
+        logger.error(errorMessage);
+        result.errors.push(errorMessage);
       }
       
-      // 7. 마지막 동기화 시간 업데이트
-      await dbAdapter.db!.update(schema.repositories)
-        .set({ 
-          lastSyncAt: new Date().toISOString(),
-          updatedAt: new Date().toISOString()
-        })
-        .where(eq(schema.repositories.id, repoId))
-        .execute();
+      // GitHub API를 통해 PR 및 리뷰 데이터 수집
+      try {
+        // owner/repo 형식에서 추출
+        const [owner, repo] = repoInfo.fullName.split('/');
+        
+        if (owner && repo) {
+          // PR 및 리뷰 데이터 수집
+          const prData = await this.githubApiCollector.collectRepositoryData(owner, repo, since);
+          
+          // 수집된 PR 데이터 저장
+          result.pullRequestCount = await this.storePullRequests(repoInfo, prData.prs);
+          
+          // 각 PR의 리뷰 처리
+          for (const pr of prData.prs) {
+            const reviewCount = await this.storePullRequestReviews(repoInfo, pr.number, pr.reviews);
+            result.reviewCount += reviewCount;
+          }
+          
+          logger.info(`PR 데이터 수집 완료: ${result.pullRequestCount}개 PR, ${result.reviewCount}개 리뷰`);
+        } else {
+          const errorMessage = `저장소 이름 형식이 잘못되었습니다: ${repoInfo.fullName}`;
+          logger.error(errorMessage);
+          result.errors.push(errorMessage);
+        }
+      } catch (error) {
+        const errorMessage = `PR 및 리뷰 데이터 수집 중 오류: ${error}`;
+        logger.error(errorMessage);
+        result.errors.push(errorMessage);
+      }
+      
+      // JIRA 이슈 데이터 수집 (syncJira가 true일 때만)
+      if (syncJira) {
+        try {
+          // JIRA 데이터 수집기 초기화
+          await this.jiraDataCollector.initialize();
+          
+          // JIRA 이슈 데이터 수집
+          const issuesData = await this.collectJiraIssuesForRepository(repoInfo, since);
+          
+          // 수집된 JIRA 이슈 데이터 저장
+          if (issuesData.length > 0) {
+            result.jiraIssueCount = await this.storeJiraIssues(repoInfo, issuesData);
+            logger.info(`JIRA 이슈 데이터 수집 완료: ${result.jiraIssueCount}개 이슈`);
+          } else {
+            logger.info(`JIRA 이슈 데이터 없음: ${repoInfo.fullName}`);
+          }
+        } catch (error) {
+          const errorMessage = `JIRA 이슈 데이터 수집 중 오류: ${error}`;
+          logger.error(errorMessage);
+          result.errors.push(errorMessage);
+        }
+      }
+      
+      // 마지막 동기화 시간 업데이트
+      await dbAdapter.update(
+        schema.repositories,
+        { lastSyncAt: new Date() },
+        eq(schema.repositories.id, repoId)
+      );
       
       result.success = true;
-      result.message = '동기화가 성공적으로 완료되었습니다.';
+      result.message = '저장소 동기화 성공';
+      logger.info(`저장소 동기화 완료: ${repoInfo.fullName}`);
     } catch (error) {
-      console.error(`저장소 ${repoInfo.fullName} 동기화 중 오류 발생:`, error);
-      result.success = false;
-      result.message = `동기화 중 오류 발생: ${error}`;
-      result.errors.push(`${error}`);
+      result.message = `저장소 동기화 실패: ${error}`;
+      result.errors.push(result.message);
+      logger.error(result.message);
     }
     
     result.endTime = new Date();
-    console.log(`저장소 ${repoInfo.fullName} 동기화 완료. 결과: ${result.success ? '성공' : '실패'}`);
-    
     return result;
   }
   
@@ -189,18 +231,19 @@ export class SyncManager {
    * 모든 저장소를 동기화합니다.
    * 
    * @param forceFull 전체 동기화 여부 (기본값: false)
+   * @param syncJira JIRA 이슈 동기화 여부 (기본값: true)
    * @returns 동기화 결과 목록
    */
-  async syncAllRepositories(forceFull: boolean = false): Promise<SyncResult[]> {
+  async syncAllRepositories(forceFull: boolean = false, syncJira: boolean = true): Promise<SyncResult[]> {
     const repositories = await this.getAllRepositories();
     const results: SyncResult[] = [];
     
     for (const repo of repositories) {
       try {
-        const result = await this.syncRepository(repo.id, forceFull);
+        const result = await this.syncRepository(repo.id, forceFull, syncJira);
         results.push(result);
       } catch (error) {
-        console.error(`저장소 ${repo.fullName} 동기화 중 오류 발생:`, error);
+        logger.error(`저장소 ${repo.fullName} 동기화 중 오류 발생:`, error);
         results.push({
           repositoryId: repo.id,
           repositoryName: repo.fullName,
@@ -209,6 +252,7 @@ export class SyncManager {
           commitCount: 0,
           pullRequestCount: 0,
           reviewCount: 0,
+          jiraIssueCount: 0,
           startTime: new Date(),
           endTime: new Date(),
           errors: [`${error}`]
@@ -217,6 +261,125 @@ export class SyncManager {
     }
     
     return results;
+  }
+  
+  /**
+   * 저장소와 관련된 JIRA 이슈 목록을 수집합니다.
+   * @param repoInfo 저장소 정보
+   * @param since 이 시간 이후의 이슈만 수집
+   * @returns JIRA 이슈 목록
+   */
+  private async collectJiraIssuesForRepository(
+    repoInfo: RepositoryInfo, 
+    since?: Date
+  ): Promise<JiraIssue[]> {
+    // 저장소 이름에서 프로젝트 키 추출 시도
+    // 일반적으로 저장소 이름은 "project-repo" 형식이므로 '-' 앞 부분을 프로젝트 키로 사용
+    const projectKey = repoInfo.name.split('-')[0].toUpperCase();
+    
+    // 검색 옵션 설정
+    const searchOptions = {
+      projectKey: projectKey,
+      startDate: since,
+      endDate: new Date() // 현재 시간까지
+    };
+    
+    try {
+      // 최신 완료된 이슈와 생성된 이슈를 함께 가져옴
+      const [completedIssues, createdIssues] = await Promise.all([
+        this.jiraDataCollector.getCompletedIssues(searchOptions),
+        this.jiraDataCollector.getCreatedIssues(searchOptions)
+      ]);
+      
+      // 중복 제거를 위해 Map 사용
+      const issueMap = new Map<string, JiraIssue>();
+      
+      // 완료된 이슈와 생성된 이슈를 합침 (중복 제거)
+      completedIssues.forEach(issue => {
+        issueMap.set(issue.key, issue);
+      });
+      
+      createdIssues.forEach(issue => {
+        // 이미 완료된 이슈에 있으면 덮어쓰지 않음
+        if (!issueMap.has(issue.key)) {
+          issueMap.set(issue.key, issue);
+        }
+      });
+      
+      // Map에서 이슈 배열로 변환
+      return Array.from(issueMap.values());
+    } catch (error) {
+      logger.error(`JIRA 이슈 수집 중 오류: ${error}`);
+      throw error;
+    }
+  }
+  
+  /**
+   * JIRA 이슈 데이터를 데이터베이스에 저장합니다.
+   * @param repoInfo 저장소 정보
+   * @param issues JIRA 이슈 목록
+   * @returns 저장된 이슈 수
+   */
+  private async storeJiraIssues(repoInfo: RepositoryInfo, issues: JiraIssue[]): Promise<number> {
+    if (!dbAdapter.db) {
+      throw new Error('데이터베이스가 초기화되지 않았습니다.');
+    }
+    
+    if (issues.length === 0) {
+      return 0;
+    }
+    
+    try {
+      let insertCount = 0;
+      
+      // 이슈 데이터 변환 및 저장
+      for (const issue of issues) {
+        try {
+          // 기존 이슈 조회 (DB에 이미 존재하는지 확인)
+          const existingIssues = await dbAdapter.select(
+            dbAdapter.db.select()
+              .from(schema.jiraIssues)
+              .where(eq(schema.jiraIssues.key, issue.key))
+          );
+          
+          const issueData = {
+            repositoryId: repoInfo.id,
+            key: issue.key,
+            summary: issue.summary,
+            description: issue.description || '',
+            status: issue.status,
+            issueType: issue.type || '',
+            assignee: issue.assignee?.displayName || '',
+            reporter: issue.reporter?.displayName || '',
+            createdAt: new Date(issue.createdAt || new Date()),
+            updatedAt: new Date(issue.updatedAt || new Date()),
+            resolvedAt: issue.resolvedAt ? new Date(issue.resolvedAt) : null
+          };
+          
+          if (existingIssues.length > 0) {
+            // 이슈가 이미 존재하면 업데이트
+            await dbAdapter.update(
+              schema.jiraIssues,
+              issueData,
+              eq(schema.jiraIssues.key, issue.key)
+            );
+          } else {
+            // 새 이슈 삽입
+            await dbAdapter.insert(schema.jiraIssues, issueData);
+            insertCount++;
+          }
+        } catch (error) {
+          logger.error(`JIRA 이슈 저장 중 오류 (${issue.key}): ${error}`);
+          // 개별 이슈 저장 오류는 무시하고 계속 진행
+          continue;
+        }
+      }
+      
+      return insertCount;
+    } catch (error) {
+      logger.error(`JIRA 이슈 저장 중 오류: ${error}`);
+      throw error;
+    }
   }
   
   /**
@@ -240,30 +403,191 @@ export class SyncManager {
   }
   
   /**
-   * 수집된 PR 데이터를 DB에 저장합니다.
-   * 
+   * PR 데이터를 데이터베이스에 저장
    * @param repoInfo 저장소 정보
    * @param pullRequests PR 목록
    * @returns 저장된 PR 수
    */
   private async storePullRequests(repoInfo: RepositoryInfo, pullRequests: any[]): Promise<number> {
-    // Task 2.2 완료 후 구현 예정
-    // 일단은 Mock 데이터로 저장된 것처럼 처리
-    return pullRequests.length;
+    let storedCount = 0;
+    
+    try {
+      for (const pr of pullRequests) {
+        try {
+          // PR 작성자 처리
+          let authorId = null;
+          if (pr.user) {
+            authorId = await this.getOrCreateUser(pr.user.login, pr.user.id, pr.user.avatar_url);
+          }
+          
+          // PR 병합자 처리 (있는 경우)
+          let mergedById = null;
+          if (pr.merged_by) {
+            mergedById = await this.getOrCreateUser(pr.merged_by.login, pr.merged_by.id, pr.merged_by.avatar_url);
+          }
+          
+          // PR 상태 결정
+          let state = pr.state;
+          if (pr.state === 'closed' && pr.merged_at) {
+            state = 'merged';
+          }
+          
+          // 기존 PR 확인
+          const existingPRs = await dbAdapter.query(`
+            SELECT * FROM pull_requests WHERE repository_id = ? AND number = ?
+          `, [repoInfo.id, pr.number]);
+          
+          if (existingPRs && existingPRs.length > 0) {
+            // 기존 PR 업데이트
+            await dbAdapter.update(
+              schema.pullRequests,
+              {
+                title: pr.title,
+                body: pr.body || '',
+                state: state,
+                isDraft: pr.draft || false,
+                additions: pr.additions || 0,
+                deletions: pr.deletions || 0,
+                changedFiles: pr.changed_files || 0,
+                updatedAt: new Date(pr.updated_at),
+                closedAt: pr.closed_at ? new Date(pr.closed_at) : null,
+                mergedAt: pr.merged_at ? new Date(pr.merged_at) : null,
+                mergedBy: mergedById
+              },
+              eq(schema.pullRequests.id, existingPRs[0].id)
+            );
+            
+            logger.debug(`PR #${pr.number} 업데이트 완료`);
+          } else {
+            // 새 PR 추가
+            await dbAdapter.insert(schema.pullRequests, {
+              repositoryId: repoInfo.id,
+              number: pr.number,
+              title: pr.title,
+              body: pr.body || '',
+              state: state,
+              authorId,
+              isDraft: pr.draft || false,
+              additions: pr.additions || 0,
+              deletions: pr.deletions || 0,
+              changedFiles: pr.changed_files || 0,
+              createdAt: new Date(pr.created_at),
+              updatedAt: new Date(pr.updated_at),
+              closedAt: pr.closed_at ? new Date(pr.closed_at) : null,
+              mergedAt: pr.merged_at ? new Date(pr.merged_at) : null,
+              mergedBy: mergedById
+            });
+            
+            logger.debug(`PR #${pr.number} 추가 완료`);
+          }
+          
+          storedCount++;
+        } catch (error) {
+          logger.error(`PR #${pr.number} 저장 실패: ${error}`);
+        }
+      }
+    } catch (error) {
+      logger.error(`PR 데이터 저장 중 오류 발생: ${error}`);
+    }
+    
+    return storedCount;
   }
   
   /**
-   * 수집된 PR 리뷰 데이터를 DB에 저장합니다.
-   * 
+   * PR 리뷰 데이터를 데이터베이스에 저장
    * @param repoInfo 저장소 정보
    * @param prNumber PR 번호
    * @param reviews 리뷰 목록
    * @returns 저장된 리뷰 수
    */
   private async storePullRequestReviews(repoInfo: RepositoryInfo, prNumber: number, reviews: any[]): Promise<number> {
-    // Task 2.2 완료 후 구현 예정
-    // 일단은 Mock 데이터로 저장된 것처럼 처리
-    return reviews.length;
+    let storedCount = 0;
+    
+    try {
+      // PR ID 찾기
+      const pullRequests = await dbAdapter.query(`
+        SELECT id FROM pull_requests WHERE repository_id = ? AND number = ?
+      `, [repoInfo.id, prNumber]);
+      
+      if (!pullRequests || pullRequests.length === 0) {
+        logger.warn(`PR #${prNumber}를 찾을 수 없어 리뷰를 저장할 수 없습니다.`);
+        return 0;
+      }
+      
+      const prId = pullRequests[0].id;
+      
+      for (const review of reviews) {
+        try {
+          // 리뷰어 처리
+          let reviewerId = null;
+          if (review.user) {
+            reviewerId = await this.getOrCreateUser(review.user.login, review.user.id, review.user.avatar_url);
+          }
+          
+          // 기존 리뷰 확인
+          const existingReviews = await dbAdapter.query(`
+            SELECT * FROM pr_reviews WHERE id = ?
+          `, [review.id]);
+          
+          if (!existingReviews || existingReviews.length === 0) {
+            // 새 리뷰 추가
+            await dbAdapter.insert(schema.prReviews, {
+              id: review.id,
+              pullRequestId: prId,
+              reviewerId,
+              state: review.state,
+              body: review.body || '',
+              submittedAt: new Date(review.submitted_at),
+              createdAt: new Date(),
+              updatedAt: new Date()
+            });
+            
+            logger.debug(`PR #${prNumber}의 리뷰 ${review.id} 추가 완료`);
+            storedCount++;
+          }
+        } catch (error) {
+          logger.error(`리뷰 ${review.id} 저장 실패: ${error}`);
+        }
+      }
+    } catch (error) {
+      logger.error(`PR #${prNumber}의 리뷰 데이터 저장 중 오류 발생: ${error}`);
+    }
+    
+    return storedCount;
+  }
+  
+  /**
+   * 사용자 정보를 가져오거나 새로 생성
+   * @param login GitHub 사용자명
+   * @param githubId GitHub 사용자 ID
+   * @param avatarUrl 프로필 이미지 URL
+   * @returns 사용자 ID
+   */
+  private async getOrCreateUser(login: string, githubId: number, avatarUrl?: string): Promise<number> {
+    try {
+      // 기존 사용자 찾기
+      const existingUsers = await dbAdapter.query(`
+        SELECT * FROM users WHERE github_id = ?
+      `, [githubId]);
+      
+      if (existingUsers && existingUsers.length > 0) {
+        return existingUsers[0].id;
+      }
+      
+      // 새 사용자 생성
+      const result = await dbAdapter.insert(schema.users, {
+        login,
+        githubId,
+        avatarUrl: avatarUrl || null,
+        name: null,
+        email: null
+      });
+      
+      return result.id;
+    } catch (error) {
+      logger.error(`사용자 정보 처리 중 오류 발생: ${error}`);
+      throw error;
+    }
   }
 }
 
@@ -278,6 +602,7 @@ export interface SyncResult {
   commitCount: number;
   pullRequestCount: number;
   reviewCount: number;
+  jiraIssueCount: number;
   startTime: Date;
   endTime: Date;
   errors: string[];

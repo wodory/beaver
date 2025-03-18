@@ -17,11 +17,19 @@ import {
 } from "lucide-react"
 
 interface SidebarProps extends React.HTMLAttributes<HTMLDivElement> {
-  isCollapsed: boolean
+  isCollapsed: boolean;
+  activeView?: string;
+  onViewChange?: (view: string) => void;
 }
 
-export function AppSidebar({ className, isCollapsed }: SidebarProps) {
+export function AppSidebar({ className, isCollapsed, activeView = 'dashboard', onViewChange }: SidebarProps) {
   const [isProjectOpen, setIsProjectOpen] = useState(true)
+
+  const handleViewChange = (view: string) => {
+    if (onViewChange) {
+      onViewChange(view);
+    }
+  }
 
   return (
     <Sidebar
@@ -49,110 +57,87 @@ export function AppSidebar({ className, isCollapsed }: SidebarProps) {
       </div>
 
       {/* Search */}
-      <div className="px-4 py-2">
+      <div className={cn(
+        "px-4 py-2",
+        isCollapsed ? "hidden" : ""
+      )}>
         <div className="relative">
-          <Search className="absolute left-2 top-2.5 h-4 w-4 text-muted-foreground" />
-          <Input
-            placeholder="검색..."
-            className={cn(
-              "pl-8 bg-sidebar-accent text-sidebar-accent-foreground placeholder:text-muted-foreground transition-all duration-300 ease-in-out",
-              isCollapsed && "w-8 px-0 pl-8 text-transparent"
-            )}
-          />
+          <Search className="pointer-events-none absolute left-2 top-2.5 h-4 w-4 text-muted-foreground" />
+          <Input placeholder="Search..." className="pl-8 bg-sidebar-input" />
         </div>
       </div>
 
-      {/* Main Navigation */}
+      {/* Navigation */}
       <ScrollArea className="flex-1">
-        <div className="flex flex-col gap-4 pt-4">
-          {/* Project Menu */}
-          <div className="flex flex-col gap-1 px-4">
-            {!isCollapsed ? (
-              <Collapsible open={isProjectOpen} onOpenChange={setIsProjectOpen}>
-                <CollapsibleTrigger asChild>
-                  <Button variant="ghost" className="w-full justify-start gap-2 text-sidebar-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground">
-                    <LayoutDashboard className="h-4 w-4" />
-                    <span className="font-medium">Project</span>
-                    <ChevronDown className={cn(
-                      "ml-auto h-4 w-4 transition-transform duration-200",
-                      isProjectOpen && "rotate-180"
-                    )} />
-                  </Button>
-                </CollapsibleTrigger>
-                <CollapsibleContent className="ml-6 flex flex-col gap-1">
-                  <Button variant="ghost" className="justify-start pl-4 text-sidebar-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground">Project Overview</Button>
-                  <Button variant="ghost" className="justify-start pl-4 text-sidebar-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground">DORA Metrics</Button>
-                  <Button variant="ghost" className="justify-start pl-4 text-sidebar-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground">Dev Metrics</Button>
-                  <Button variant="ghost" className="justify-start pl-4 text-sidebar-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground">Review Collaboration</Button>
-                  <Button variant="ghost" className="justify-start pl-4 text-sidebar-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground">Team Wellbeing</Button>
-                </CollapsibleContent>
-              </Collapsible>
-            ) : (
-              <Button variant="ghost" className="w-full justify-center p-0">
-                <LayoutDashboard className="h-4 w-4" />
-              </Button>
+        <div className="px-3 py-2">
+          <Button 
+            variant={activeView === 'dashboard' ? 'secondary' : 'ghost'} 
+            className="w-full justify-start"
+            onClick={() => handleViewChange('dashboard')}
+          >
+            <LayoutDashboard className="mr-2 h-5 w-5" />
+            <span className={cn(
+              "transition-all duration-300 ease-in-out",
+              isCollapsed ? "opacity-0 w-0" : "opacity-100"
+            )}>대시보드</span>
+          </Button>
+
+          <Button 
+            variant={activeView === 'dora' ? 'secondary' : 'ghost'} 
+            className="w-full justify-start"
+            onClick={() => handleViewChange('dora')}
+          >
+            <Users className="mr-2 h-5 w-5" />
+            <span className={cn(
+              "transition-all duration-300 ease-in-out",
+              isCollapsed ? "opacity-0 w-0" : "opacity-100"
+            )}>DORA 메트릭스</span>
+          </Button>
+
+          <Collapsible
+            open={isProjectOpen}
+            onOpenChange={setIsProjectOpen}
+            className={cn(
+              isCollapsed ? "opacity-0 invisible" : "opacity-100 visible"
             )}
-          </div>
+          >
+            <CollapsibleTrigger asChild>
+              <Button variant="ghost" className="w-full justify-start">
+                <FileText className="mr-2 h-5 w-5" />
+                <span className={cn(
+                  "transition-all duration-300 ease-in-out",
+                  isCollapsed ? "opacity-0 w-0" : "opacity-100"
+                )}>프로젝트</span>
+                <ChevronDown className="ml-auto h-4 w-4 shrink-0 opacity-50" />
+              </Button>
+            </CollapsibleTrigger>
+            <CollapsibleContent className="px-4 py-2 space-y-1">
+              <Button variant="ghost" size="sm" className="w-full justify-start">
+                <span>저장소 보기</span>
+              </Button>
+              <Button variant="ghost" size="sm" className="w-full justify-start">
+                <span>새 저장소 추가</span>
+              </Button>
+            </CollapsibleContent>
+          </Collapsible>
 
-          {/* Team */}
-          <div className="px-4">
-            <Button variant="ghost" className="w-full justify-start gap-2 text-sidebar-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground">
-              <Users className="h-4 w-4" />
-              <span className={cn(
-                "transition-all duration-300 ease-in-out",
-                isCollapsed ? "opacity-0 w-0" : "opacity-100"
-              )}>Team</span>
-            </Button>
-          </div>
+          <Button variant="ghost" className="w-full justify-start">
+            <User className="mr-2 h-5 w-5" />
+            <span className={cn(
+              "transition-all duration-300 ease-in-out",
+              isCollapsed ? "opacity-0 w-0" : "opacity-100"
+            )}>내 프로필</span>
+          </Button>
 
-          {/* People */}
-          <div className="px-4">
-            <Button variant="ghost" className="w-full justify-start gap-2 text-sidebar-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground">
-              <User className="h-4 w-4" />
-              <span className={cn(
-                "transition-all duration-300 ease-in-out",
-                isCollapsed ? "opacity-0 w-0" : "opacity-100"
-              )}>People</span>
-            </Button>
-          </div>
-
-          {/* Reports */}
-          <div className="px-4">
-            <Button variant="ghost" className="w-full justify-start gap-2 text-sidebar-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground">
-              <FileText className="h-4 w-4" />
-              <span className={cn(
-                "transition-all duration-300 ease-in-out",
-                isCollapsed ? "opacity-0 w-0" : "opacity-100"
-              )}>Reports</span>
-            </Button>
-          </div>
-
-          {/* Settings */}
-          <div className="px-4">
-            <Button variant="ghost" className="w-full justify-start gap-2 text-sidebar-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground">
-              <Settings className="h-4 w-4" />
-              <span className={cn(
-                "transition-all duration-300 ease-in-out",
-                isCollapsed ? "opacity-0 w-0" : "opacity-100"
-              )}>Settings</span>
-            </Button>
-          </div>
+          <Button variant="ghost" className="w-full justify-start">
+            <Settings className="mr-2 h-5 w-5" />
+            <span className={cn(
+              "transition-all duration-300 ease-in-out",
+              isCollapsed ? "opacity-0 w-0" : "opacity-100"
+            )}>설정</span>
+          </Button>
         </div>
       </ScrollArea>
-
-      {/* User Profile */}
-      <div className="mt-auto p-4 border-t border-sidebar-border">
-        <Button variant="ghost" className="w-full justify-start gap-2 text-sidebar-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground">
-          <div className="h-6 w-6 rounded-full bg-sidebar-accent" />
-          <div className={cn(
-            "flex flex-col items-start transition-all duration-300 ease-in-out",
-            isCollapsed ? "opacity-0 w-0" : "opacity-100"
-          )}>
-            <span className="text-sm">Your Photo</span>
-            <span className="text-xs text-muted-foreground">Log in/out</span>
-          </div>
-        </Button>
-      </div>
     </Sidebar>
   )
 } 

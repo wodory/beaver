@@ -1,0 +1,21 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "allowSyntheticDefaultImports": true,
+    "esModuleInterop": true,
+    "resolveJsonModule": true,
+    "strict": false,
+    "skipLibCheck": true,
+    "outDir": "./dist-jira",
+    "sourceMap": true
+  },
+  "include": [
+    "src/services/jira/**/*",
+    "src/utils/logger.ts",
+    "src/tests/jira-test/**/*",
+    "src/tests/jira-integration-test.ts"
+  ],
+  "exclude": ["node_modules"]
+} 

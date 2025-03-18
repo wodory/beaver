@@ -1,0 +1,44 @@
+{
+    "repositories": [
+        {
+            "id": 1,
+            "name": "repo1",
+            "fullName": "owner/repo1",
+            "type": "github",
+            "cloneUrl": "https://github.com/owner/repo1.git",
+            "apiUrl": "https://api.github.com"
+        },
+        {
+            "id": 2,
+            "name": "repo2",
+            "fullName": "owner/repo2",
+            "type": "github",
+            "cloneUrl": "https://github.com/owner/repo2.git",
+            "apiUrl": "https://api.github.com"
+        },
+        {
+            "id": 3,
+            "name": "project1",
+            "fullName": "company/project1",
+            "type": "github-enterprise",
+            "cloneUrl": "https://git.company.com/company/project1.git",
+            "apiUrl": "https://git.company.com/api/v3"
+        },
+        {
+            "id": 4,
+            "name": "project2",
+            "fullName": "company/project2",
+            "type": "github-enterprise",
+            "cloneUrl": "https://git.company.com/company/project2.git",
+            "apiUrl": "https://git.company.com/api/v3"
+        }
+    ],
+    "defaultPaths": {
+        "repoStorage": "./repos"
+    },
+    "defaultTimeRange": {
+        "since": "2024-01-01",
+        "until": "2025-03-16"
+    },
+    "refreshInterval": 300000
+}

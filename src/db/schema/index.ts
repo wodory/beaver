@@ -10,4 +10,5 @@ export * from './commits';
 export * from './pullRequests';
 export * from './reviews';
 export * from './teams';
-export * from './metricCache'; 
+export * from './metricCache';
+export * from './jiraIssues'; 

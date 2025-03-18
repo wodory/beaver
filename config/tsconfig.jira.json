@@ -1,0 +1,16 @@
+{
+  "extends": "../tsconfig.json",
+  "compilerOptions": {
+    "outDir": "../dist-jira",
+    "rootDir": "../src",
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext"
+  },
+  "include": [
+    "../src/services/jira/**/*",
+    "../src/utils/logger.ts",
+    "../src/tests/jira-test/**/*",
+    "../src/tests/jira-integration-test.ts"
+  ],
+  "exclude": ["../node_modules"]
+} 

@@ -104,3 +104,72 @@ src/
     ├── git/           # Git 서비스 관련 코드
     └── repository-manager.ts # 저장소 관리
 ```
+
+## JIRA 모듈 사용 가이드
+
+### 개요
+JIRA API 통합 모듈은 JIRA 이슈 및 프로젝트 데이터를 수집하고 분석할 수 있는 기능을 제공합니다. 이 모듈은 어댑터 패턴을 사용하여 실제 JIRA API와 모의(Mock) 데이터 소스를 모두 지원합니다.
+
+### 주요 기능
+- JIRA 프로젝트 목록 조회
+- 완료된 이슈 및 생성된 이슈 목록 조회
+- 다양한 검색 옵션을 통한 이슈 필터링
+- 이슈 통계 계산 (유형별, 상태별, 담당자별)
+- 프로젝트 요약 정보 생성
+
+### 설정 방법
+1. `.env` 파일에 JIRA 관련 환경 변수 설정:
+```
+JIRA_BASE_URL=https://your-domain.atlassian.net
+JIRA_USERNAME=your-email@example.com
+JIRA_API_TOKEN=your-api-token
+JIRA_PROJECT_KEYS=PROJ1,PROJ2,PROJ3
+USE_MOCK_JIRA=false
+```
+
+2. 모의 데이터 사용 방법:
+개발 또는 테스트 목적으로 실제 JIRA API 대신 모의 데이터를 사용할 수 있습니다. 이 경우 `USE_MOCK_JIRA=true`로 설정하세요.
+
+### 샘플 코드
+```typescript
+import { JiraDataCollector } from './services/jira/JiraDataCollector';
+import { JiraSearchOptions } from './services/jira/IJiraAdapter';
+
+// 수집기 초기화 (true: 모의 데이터 사용, false: 실제 API 사용)
+const jiraCollector = new JiraDataCollector(false);
+await jiraCollector.initialize();
+
+// 검색 옵션 설정
+const searchOptions: JiraSearchOptions = {
+  startDate: '2023-01-01',
+  endDate: '2023-12-31',
+  projectKey: 'PROJ1'
+};
+
+// 이슈 목록 조회
+const issues = await jiraCollector.getCreatedIssues(searchOptions);
+
+// 이슈 통계 계산
+const stats = await jiraCollector.calculateIssueStats(issues);
+console.log(`총 이슈 수: ${stats.totalIssues}`);
+console.log(`완료된 이슈 수: ${stats.completedIssues}`);
+console.log(`평균 해결 시간: ${stats.averageResolutionTimeInDays.toFixed(2)}일`);
+```
+
+### 모듈 구조
+- `IJiraAdapter.ts`: 인터페이스 정의
+- `JiraApiAdapter.ts`: 실제 JIRA API 호출 구현
+- `MockJiraAdapter.ts`: 모의 데이터 제공 구현
+- `JiraDataCollector.ts`: 데이터 수집 및 처리 로직
+- `JiraConfigManager.ts`: 환경 설정 관리
+
+### 테스트
+JIRA 모듈 테스트를 실행하려면:
+```bash
+yarn tsc -p tsconfig.jira.json && node dist-jira/tests/jira-test/simple-test.js
+```
+
+모의 어댑터 테스트:
+```bash
+yarn tsc -p tsconfig.jira.json && node dist-jira/tests/jira-test/mock-adapter-test.js
+```

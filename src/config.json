@@ -1,36 +1,59 @@
 {
+  "domain" : [
+    {
+      "name": "github",
+      "url": "https://github.com",
+      "apiUrl" : "https://api.github.com"
+    },
+    {
+      "name": "github_enterprise",
+      "company": "naver",
+      "url": "https://oss.navercorp.com",
+      "apiUrl" : "https://oss.navercorp.com/api/v3"
+    }
+  ],
+  "test_repo": [
+    {
+      "id" : 1,
+      "name" : "zero-demo",
+      "fullName" : "wodory/zero-demo",
+      "type" : "github_enterprise",
+      "company" : "naver",
+      "url" : "https://oss.navercorp.com/wodory/zero-demo.git"
+    }
+  ],
   "repositories": [
     {
-      "id": 1,
-      "name": "repo1",
-      "fullName": "owner/repo1",
-      "type": "github",
-      "cloneUrl": "https://github.com/owner/repo1.git",
-      "apiUrl": "https://api.github.com"
+      "id" : 2,
+      "name" : "web-ui",
+      "fullName" : "n3r/web-ui",
+      "type" : "github_enterprise",
+      "company" : "naver",
+      "url" : "https://oss.navercorp.com/n3r/web-ui.git"
+    }, 
+    {
+      "id" : 1,
+      "name" : "zero-js",
+      "fullName" : "se-framework/zero-js",
+      "type" : "github_enterprise",
+      "company" : "naver",
+      "url" : "https://oss.navercorp.com/se-framework/zero-js.git"
+    }, 
+    {
+      "id" : 3,
+      "name" : "pinpoint-naver",
+      "fullName" : "pinpoint/pinpoint-naver",
+      "type" : "github_enterprise",
+      "company" : "naver",
+      "url" : "https://oss.navercorp.com/pinpoint/pinpoint-naver.git"
     },
     {
-      "id": 2,
-      "name": "repo2",
-      "fullName": "owner/repo2",
-      "type": "github",
-      "cloneUrl": "https://github.com/owner/repo2.git",
-      "apiUrl": "https://api.github.com"
-    },
-    {
-      "id": 3,
-      "name": "project1",
-      "fullName": "company/project1",
-      "type": "github-enterprise",
-      "cloneUrl": "https://git.company.com/company/project1.git",
-      "apiUrl": "https://git.company.com/api/v3"
-    },
-    {
-      "id": 4,
-      "name": "project2",
-      "fullName": "company/project2",
-      "type": "github-enterprise",
-      "cloneUrl": "https://git.company.com/company/project2.git",
-      "apiUrl": "https://git.company.com/api/v3"
+      "id" : 4,
+      "name" : "web-ui",
+      "fullName" : "nelo/web-ui",
+      "type" : "github_enterprise",
+      "company" : "naver",
+      "url" : "https://oss.navercorp.com/nelo/web-ui"
     }
   ],
   "defaultPaths": {
