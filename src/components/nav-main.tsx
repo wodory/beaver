@@ -6,6 +6,7 @@ import {
   FolderKanban,
   FileText,
   Settings,
+  LineChart,
 } from "lucide-react"
 
 interface NavMainProps {
@@ -29,6 +30,11 @@ export function NavMain({ isCollapsed }: NavMainProps) {
       title: "Team",
       icon: Users,
       href: "/team",
+    },
+    {
+      title: "Metrics",
+      icon: LineChart,
+      href: "/metrics",
     },
     {
       title: "People",
@@ -56,9 +62,19 @@ export function NavMain({ isCollapsed }: NavMainProps) {
               "w-full justify-start",
               isCollapsed && "h-12 w-12 p-0"
             )}
+            asChild={!!item.href}
           >
-            <item.icon className={cn("h-4 w-4", isCollapsed ? "mx-auto" : "mr-2")} />
-            {!isCollapsed && <span>{item.title}</span>}
+            {item.href ? (
+              <a href={item.href}>
+                <item.icon className={cn("h-4 w-4", isCollapsed ? "mx-auto" : "mr-2")} />
+                {!isCollapsed && <span>{item.title}</span>}
+              </a>
+            ) : (
+              <>
+                <item.icon className={cn("h-4 w-4", isCollapsed ? "mx-auto" : "mr-2")} />
+                {!isCollapsed && <span>{item.title}</span>}
+              </>
+            )}
           </Button>
         ))}
       </nav>

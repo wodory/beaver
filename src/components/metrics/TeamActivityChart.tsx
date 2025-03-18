@@ -14,7 +14,7 @@ import {
   Area,
 } from 'recharts';
 import { Card, CardContent, CardHeader, CardTitle } from '../ui/card';
-import { TeamMetrics } from '../../services/metrics/MetricsService';
+import { TeamMetrics } from '../../types/metrics';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../ui/select';
 import { Tabs, TabsList, TabsTrigger } from '../ui/tabs';
 
@@ -44,7 +44,7 @@ export function TeamActivityChart({ teamData, title }: TeamActivityChartProps) {
         return [
           { name: '커밋 수', value: teamData.commitCount, color: '#8884d8' },
           { name: 'PR 수', value: teamData.prCount, color: '#82ca9d' },
-          { name: '병합된 PR', value: teamData.prMergedCount, color: '#ffc658' },
+          { name: '병합된 PR', value: teamData.mergedPrCount, color: '#ffc658' },
           { name: '리뷰 수', value: teamData.reviewCount, color: '#ff8042' },
         ];
       case 'codeChanges':
@@ -69,7 +69,7 @@ export function TeamActivityChart({ teamData, title }: TeamActivityChartProps) {
         return [
           { 
             name: '완료된 이슈 수', 
-            value: teamData.jiraIssuesCompletedCount,
+            value: teamData.jiraIssuesCount || 0,
             color: '#8884d8'
           },
           { 
@@ -106,7 +106,7 @@ export function TeamActivityChart({ teamData, title }: TeamActivityChartProps) {
             month,
             커밋수: Math.round(teamData.commitCount * factor * (0.8 + Math.random() * 0.4) / 6),
             PR수: Math.round(teamData.prCount * factor * (0.8 + Math.random() * 0.4) / 6),
-            병합된PR: Math.round(teamData.prMergedCount * factor * (0.8 + Math.random() * 0.4) / 6),
+            병합된PR: Math.round(teamData.mergedPrCount * factor * (0.8 + Math.random() * 0.4) / 6),
             리뷰수: Math.round(teamData.reviewCount * factor * (0.8 + Math.random() * 0.4) / 6),
           };
         case 'codeChanges':
@@ -124,7 +124,7 @@ export function TeamActivityChart({ teamData, title }: TeamActivityChartProps) {
         case 'jira':
           return {
             month,
-            '완료된이슈': Math.round(teamData.jiraIssuesCompletedCount * factor * (0.8 + Math.random() * 0.4) / 6),
+            '완료된이슈': Math.round((teamData.jiraIssuesCount || 0) * factor * (0.8 + Math.random() * 0.4) / 6),
             '해결시간(시간)': Math.round((teamData.avgIssueResolutionTime || 24) * (1.2 - i * 0.1) * (0.8 + Math.random() * 0.4)),
           };
         default:

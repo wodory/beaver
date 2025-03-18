@@ -394,7 +394,7 @@ alwaysApply: false
   - **API 클라이언트 구성**: Axios 등을 이용하여 `/api` 하위 엔드포인트와 통신하는 공통 API 모듈 작성 (`src/api/client.ts` 등)  
     - 예: `getRepositories()`, `getMetricsByUser(userId)`, `getMetricsByTeam(teamName)` 등의 함수 구현  
     - **팀 지표 API 연동**: 팀별 메트릭을 가져오는 함수 (`getTeamMetrics(teamName)`) 추가하여 백엔드 새로운 팀 지표 엔드포인트와 연동  
-  - **상태 관리**: React Query 또는 Zustand 등을 사용하여 서버 상태를 캐싱 및 관리  
+  - **상태 관리**: Zustand 사용. 서버 상태를 캐싱 및 관리  
     - 쿼리 키를 개발자/프로젝트/팀별로 구분하고, 호출 결과를 캐시하여 탭 전환 시 재사용  
     - 동기화 트리거 등의 mutation은 로딩/성공 상태 관리하여 UI에 반영 (예: “동기화 중...” 표시)  
   - **에러 처리**: API 호출 실패 시 공통 처리 (토스트 알림 또는 해당 컴포넌트 영역에 에러 표시) 및 재시도 옵션 제공  
@@ -556,4 +556,3 @@ alwaysApply: false
     - 팀별 지표 기능 안내 (팀 구성 파일 경로와 포맷 설명, 예: `config/teams.json` 편집 방법)  
     - 지표 해석 가이드 (각 지표가 의미하는 바와 주의사항)  
   - **기술 문서**: 개발자를 위한 추가 문서화 (아키텍처 다이어그램, 테이블 스키마 정의서, 주요 모듈 설명 등) 작성하여 저장소에 포함  
-

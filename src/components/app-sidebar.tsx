@@ -14,6 +14,8 @@ import {
   FileText,
   Settings,
   User,
+  UsersRound,
+  LineChart,
 } from "lucide-react"
 
 interface SidebarProps extends React.HTMLAttributes<HTMLDivElement> {
@@ -93,6 +95,30 @@ export function AppSidebar({ className, isCollapsed, activeView = 'dashboard', o
               isCollapsed ? "opacity-0 w-0" : "opacity-100"
             )}>DORA 메트릭스</span>
           </Button>
+          
+          <Button 
+            variant={activeView === 'teams' ? 'secondary' : 'ghost'} 
+            className="w-full justify-start"
+            onClick={() => handleViewChange('teams')}
+          >
+            <UsersRound className="mr-2 h-5 w-5" />
+            <span className={cn(
+              "transition-all duration-300 ease-in-out",
+              isCollapsed ? "opacity-0 w-0" : "opacity-100"
+            )}>팀 메트릭스</span>
+          </Button>
+          
+          <Button 
+            variant={activeView === 'metrics' ? 'secondary' : 'ghost'} 
+            className="w-full justify-start"
+            onClick={() => handleViewChange('metrics')}
+          >
+            <LineChart className="mr-2 h-5 w-5" />
+            <span className={cn(
+              "transition-all duration-300 ease-in-out",
+              isCollapsed ? "opacity-0 w-0" : "opacity-100"
+            )}>메트릭스 분석</span>
+          </Button>
 
           <Collapsible
             open={isProjectOpen}
@@ -100,44 +126,47 @@ export function AppSidebar({ className, isCollapsed, activeView = 'dashboard', o
             className={cn(
               isCollapsed ? "opacity-0 invisible" : "opacity-100 visible"
             )}
+            disabled={isCollapsed}
           >
             <CollapsibleTrigger asChild>
-              <Button variant="ghost" className="w-full justify-start">
-                <FileText className="mr-2 h-5 w-5" />
-                <span className={cn(
-                  "transition-all duration-300 ease-in-out",
-                  isCollapsed ? "opacity-0 w-0" : "opacity-100"
-                )}>프로젝트</span>
-                <ChevronDown className="ml-auto h-4 w-4 shrink-0 opacity-50" />
+              <Button variant="ghost" className="w-full justify-between">
+                <div className="flex items-center">
+                  <FileText className="mr-2 h-5 w-5" />
+                  <span>프로젝트</span>
+                </div>
+                <ChevronDown className="h-4 w-4" />
               </Button>
             </CollapsibleTrigger>
-            <CollapsibleContent className="px-4 py-2 space-y-1">
-              <Button variant="ghost" size="sm" className="w-full justify-start">
-                <span>저장소 보기</span>
-              </Button>
-              <Button variant="ghost" size="sm" className="w-full justify-start">
-                <span>새 저장소 추가</span>
-              </Button>
+            <CollapsibleContent className="space-y-1">
+              <Button variant="ghost" className="w-full justify-start pl-10">모든 저장소</Button>
+              <Button variant="ghost" className="w-full justify-start pl-10">즐겨찾기</Button>
+              <Button variant="ghost" className="w-full justify-start pl-10">최근 활동</Button>
             </CollapsibleContent>
           </Collapsible>
-
-          <Button variant="ghost" className="w-full justify-start">
-            <User className="mr-2 h-5 w-5" />
-            <span className={cn(
-              "transition-all duration-300 ease-in-out",
-              isCollapsed ? "opacity-0 w-0" : "opacity-100"
-            )}>내 프로필</span>
-          </Button>
-
-          <Button variant="ghost" className="w-full justify-start">
-            <Settings className="mr-2 h-5 w-5" />
-            <span className={cn(
-              "transition-all duration-300 ease-in-out",
-              isCollapsed ? "opacity-0 w-0" : "opacity-100"
-            )}>설정</span>
-          </Button>
         </div>
       </ScrollArea>
+
+      {/* Footer */}
+      <div className="border-t p-3">
+        <Button variant="ghost" className="w-full justify-start">
+          <User className="mr-2 h-5 w-5" />
+          <span className={cn(
+            "transition-all duration-300 ease-in-out",
+            isCollapsed ? "opacity-0 w-0" : "opacity-100"
+          )}>프로필</span>
+        </Button>
+        <Button 
+          variant={activeView === 'settings' ? 'secondary' : 'ghost'} 
+          className="w-full justify-start"
+          onClick={() => handleViewChange('settings')}
+        >
+          <Settings className="mr-2 h-5 w-5" />
+          <span className={cn(
+            "transition-all duration-300 ease-in-out",
+            isCollapsed ? "opacity-0 w-0" : "opacity-100"
+          )}>설정</span>
+        </Button>
+      </div>
     </Sidebar>
   )
 } 
