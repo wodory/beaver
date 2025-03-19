@@ -1,0 +1,221 @@
+---
+description: 
+globs: 
+alwaysApply: false
+---
+## MetricCard의 확장 요구사항
+
+- **다양한 레이아웃**: 예) “Cycle Time Breakdown” 처럼 여러 세션(First Commit, PR Created, ...)을 수평으로 나열, 차트도 여러 개 배치 / “DORA 메트릭”은 4가지 수치 + 막대 그래프 한 개.
+- **다양한 탭/섹션**: 카드 내에 탭이 있을 수도 있고 없을 수도 있음. 탭별로 그래프나 수치 레이아웃이 달라질 수 있음.
+- **데이터 소스**: 어떤 카드(Cycle Time, DORA 등)마다 **다른 API**를 호출하거나, 다른 형태의 데이터(시간 분포 vs. 배포 빈도) 표시.
+
+기존 4단계 설계(**컨테이너 → 커스텀 훅 → 프레젠테이션**)는 여전히 유효하지만, **UI 구조를 좀 더 유연하게** 설계해야 합니다.
+
+---
+
+## 1. 프레젠테이션(뷰) 계층에서 “슬롯” 혹은 “섹션” 개념 도입
+
+**문제**: “MetricCardView”가 “타이틀/설명/탭/차트 1개” 구조만 가정하면, Cycle Time과 DORA 같이 복잡한 레이아웃에는 대응하기 어렵습니다.
+
+**해결**:  
+1. **슬롯(Slot) 혹은 섹션(Section) 개념**을 도입하여, 프레젠테이션에서 레이아웃을 확장 가능하게 만듭니다.  
+   - 예: `headerSlot`, `summarySlot`, `tabSlot`, `chartsSlot`, `footerSlot` 등.  
+   - 사용자(혹은 컨테이너)에서 이 슬롯에 어떤 컴포넌트를 넣을지 결정하면, 하나의 MetricCardView로도 여러 형태의 UI를 구성할 수 있습니다.  
+2. **Tabs**를 꼭 써야 하는 게 아니라, “탭이 있을 수도 있고 없을 수도 있다”를 지원하려면, `tabs` props를 optional로 두거나, “layoutType: 'tabbed' | 'single'” 같은 방식을 설정할 수 있습니다.
+
+**예시** (간단화):
+
+```tsx
+interface MetricCardLayoutProps {
+  title: string;
+  description?: string;
+  // 섹션별로 렌더할 컴포넌트나 데이터
+  summarySlot?: React.ReactNode;    // 상단에 주요 수치 모음
+  tabSlot?: React.ReactNode;        // 탭 버튼들
+  contentSlot?: React.ReactNode;    // 차트나 상세 정보
+  footerSlot?: React.ReactNode;
+}
+
+export function MetricCardLayout(props: MetricCardLayoutProps) {
+  const { title, description, summarySlot, tabSlot, contentSlot, footerSlot } = props;
+  return (
+    <div className="border rounded p-4">
+      <h2>{title}</h2>
+      {description && <p className="text-muted">{description}</p>}
+
+      {/* 예: 대표 수치 모음 */}
+      {summarySlot && <div className="flex gap-4 mt-2">{summarySlot}</div>}
+
+      {/* 탭 버튼 */}
+      {tabSlot && <div className="mt-4">{tabSlot}</div>}
+
+      {/* 콘텐츠 (차트나 상세 내용) */}
+      <div className="mt-4">{contentSlot}</div>
+
+      {/* 푸터 영역 */}
+      {footerSlot && <div className="mt-4 border-t pt-2">{footerSlot}</div>}
+    </div>
+  );
+}
+```
+
+- 이렇게 하면 “Cycle Time Breakdown” 카드에서는 `summarySlot`에 여러 개의 숫자 카드(First Commit, PR Created 등)를 수평 나열, `contentSlot`에 라인 차트와 바 차트를 배치할 수 있음.
+- “DORA 메트릭” 카드에서는 `summarySlot`에 4가지 DORA 지표를 표시하고, `contentSlot`에 막대 그래프 한 개만 넣으면 됨.
+- 탭이 필요한 경우 `tabSlot`에 탭 컴포넌트를 주입, 탭이 필요 없는 경우 `tabSlot`을 비워둠.
+
+### 1.1 단계별 수정 요령
+
+- **기존 MetricCardView**: “타이틀/설명/탭/차트” 구조를 고정해뒀다면, 이를 **`MetricCardLayout`**처럼 슬롯 개념으로 바꾼다.
+- **Card 레이아웃은 공통**이지만, 세부 콘텐츠는 **props로 주입**받아 렌더.  
+- “Cycle Time Breakdown” 같은 화면은, 컨테이너나 상위 컴포넌트에서 `<MetricCardLayout summarySlot={<CycleTimeSummary />} contentSlot={<CycleTimeCharts />} />`처럼 구성.
+
+---
+
+## 2. 컨테이너에서 데이터 처리 로직 “강화”
+
+**문제**: Cycle Time과 DORA 메트릭은 **데이터 구조가 매우 다르고**, 탭/차트도 각기 다릅니다.  
+**해결**:  
+1. 각 카드마다 **전용 커스텀 훅**(예: `useCycleTimeMetrics`, `useDoraMetrics`)을 만든다.  
+2. 컨테이너(예: `CycleTimeCardContainer`, `DoraCardContainer`)에서 해당 훅을 호출해 data, loading, error, tab state, etc.를 관리한다.  
+3. 준비된 data를 **MetricCardLayout**에 전달하되, 슬롯에 들어갈 컴포넌트(요약 수치, 차트 등)도 함께 렌더한다.
+
+### 2.1 예시: `CycleTimeCardContainer`
+
+```tsx
+export function CycleTimeCardContainer() {
+  const { data, isLoading, error } = useCycleTimeMetrics(); 
+  // data: { totalCycleTime, codingTime, pickupTime, reviewTime, mergedTime, chart1, chart2... }
+  // isLoading, error 처리
+
+  // 탭이 필요 없을 수도 있고, 필요하다면 tab state 관리
+  // ex: const [activeTab, setActiveTab] = useState(0);
+
+  if (isLoading) return <Spinner />;
+  if (error) return <ErrorMessage error={error} />;
+  if (!data) return null;
+
+  return (
+    <MetricCardLayout
+      title="Cycle Time Breakdown"
+      description="최근 1개월간..."
+      summarySlot={
+        <CycleTimeSummary data={data} />
+        // ex: 5개의 작은 카드(코딩시간, 픽업시간 등) horizontally
+      }
+      contentSlot={
+        <div className="grid grid-cols-2 gap-4">
+          <CycleTimeLineChart data={data.chart1} />
+          <CycleTimeBarChart data={data.chart2} />
+        </div>
+      }
+    />
+  );
+}
+```
+
+### 2.2 예시: `DoraCardContainer`
+
+```tsx
+export function DoraCardContainer() {
+  const { data, isLoading, error } = useDoraMetrics();
+  // data: { leadTime, deploymentFrequency, changeFailureRate, mttr, chartData }
+
+  if (isLoading) return <Spinner />;
+  if (error) return <ErrorMessage error={error} />;
+  if (!data) return null;
+
+  return (
+    <MetricCardLayout
+      title="DORA 메트릭스"
+      description="최근 30일간 PR"
+      summarySlot={
+        <DoraSummary data={data} />
+        // 4개의 요약 지표(배포 빈도, 리드 타임, 실패율, MTTR)
+      }
+      contentSlot={
+        <DoraBarChart data={data.chartData} />
+      }
+    />
+  );
+}
+```
+
+### 2.3 단계별 수정 요령
+
+- **기존 컨테이너**에서 “데이터 가져오기 + UI 렌더”를 한 덩어리로 하던 로직을, 이제 **`MetricCardLayout`** + **슬롯** 방식으로 나눈다.
+- 각 컨테이너는 자신의 **전용 훅**(`useCycleTimeMetrics`, `useDoraMetrics`)을 호출해 데이터를 얻은 뒤, `MetricCardLayout`에 넘길 **summarySlot**, **contentSlot** 등을 구성해 준다.
+
+---
+
+## 3. UI 전용 컴포넌트: “CycleTimeSummary”, “DoraSummary” 등
+
+**문제**: Cycle Time 요약 수치(코딩시간, 리뷰시간 등)와 DORA 요약 수치(리드타임, 배포빈도 등)는 전혀 다름.
+
+**해결**:  
+1. 각각의 **프레젠테이션 컴포넌트**를 별도로 만든다. (예: `CycleTimeSummary.tsx`, `DoraSummary.tsx`)  
+2. “MetricCardLayout”의 **summarySlot**에 이 컴포넌트를 넣으면, 한 Layout으로도 서로 다른 요약 부분을 표시할 수 있음.
+
+예시:
+
+```tsx
+export function CycleTimeSummary({ data }: { data: CycleTimeData }) {
+  return (
+    <div className="flex gap-4">
+      <MiniCard label="Total Cycle Time" value={data.totalCycleTime} />
+      <MiniCard label="Coding Time" value={data.codingTime} />
+      <MiniCard label="Pickup Time" value={data.pickupTime} />
+      ...
+    </div>
+  );
+}
+```
+
+---
+
+## 4. 탭(Tabs) 활용 시: “tabSlot” or “children as a function”
+
+어떤 MetricCard는 탭이 있고, 어떤 것은 탭이 없다. 탭도 “Cycle Time Breakdown”처럼 여러 카테고리를 전환할 수 있다면, 아래 방법 중 하나를 쓸 수 있습니다.
+
+1. **tabSlot**: `MetricCardLayout`에 `tabSlot` prop을 정의. 컨테이너에서 `<MyTabBar active={...} onChange={...} />`를 주입.  
+2. **children function**: “render prop” 형태로 `children={(activeTab) => <Content />}` 구현. 다만, 이건 복잡해질 수 있으니 slot 방식을 권장.
+
+**단계별 수정**:  
+- 만약 기존에는 “MetricCardView”가 자체적으로 `tabs` 배열과 `activeTab` 상태를 관리했다면, 이제는 **컨테이너**에서 탭 상태를 관리하고, 탭 버튼 렌더는 slot으로 내려줍니다.
+
+---
+
+## 5. 정리: 단계별로 어떻게 수정하면 좋을까?
+
+1. **Step 1: MetricCardLayout (기존 MetricCardView → 슬롯 기반으로 변경)**  
+   - 기존 `MetricCardView`가 “타이틀/설명/탭/차트”를 한 번에 처리했다면, **slots**를 지원하도록 바꾼다.  
+   - UI 레이아웃(박스, 패딩, border, title, description)만 남기고, **summarySlot, tabSlot, contentSlot, footerSlot** 같은 prop을 추가.  
+   - “DORA”나 “Cycle Time”처럼 레이아웃이 다른 경우에도 하나의 MetricCardLayout으로 대응 가능.
+
+2. **Step 2: 커스텀 훅 분리 (예: useCycleTimeMetrics, useDoraMetrics)**  
+   - 기존에 “MetricCard” 내부에서 직접 fetch하던 로직을 **전용 훅**으로 추출.  
+   - 로딩/에러 상태, 데이터 구조, API 경로 등을 훅에 담아두고, “Cycle Time” vs “DORA”를 각기 다른 훅으로 구현.  
+   - 재사용 가능성 높은 로직(날짜 필터, 공통 변환 등)은 또 다른 범용 훅으로 분리 가능.
+
+3. **Step 3: 컨테이너 컴포넌트 (CycleTimeCardContainer, DoraCardContainer)**  
+   - 각 컨테이너에서 “전용 훅” 호출 → `MetricCardLayout`에 필요한 slots 조합 → `return <MetricCardLayout ... />`.  
+   - 예: CycleTime은 summarySlot에 5개 미니 카드, contentSlot에 2개 차트. DORA는 summarySlot에 4개 지표, contentSlot에 1개 막대 그래프.  
+   - 탭이 필요한 경우, “tabSlot”에 탭 버튼 UI + state를 주입. 탭별로 다른 그래프를 보여줄 수도 있음(조건부 렌더).
+
+4. **Step 4: UI 세부 컴포넌트(“CycleTimeSummary”, “DoraSummary”, “CycleTimeChart”, “DoraBarChart”)**  
+   - 요약 수치/차트 등 구체적인 UI는 프레젠테이션 컴포넌트로 별도 분리.  
+   - 컨테이너에서 props로 넘겨받은 `data`를 **summarySlot** or **contentSlot**에 배치하는 식.  
+
+이렇게 하면 **MetricCardLayout**은 “**카드 형태 레이아웃**”을 제공하는 “껍데기” 역할만 하고, 구체적인 지표/차트는 컨테이너 + 전용 컴포넌트가 담당합니다. “Cycle Time”과 “DORA” 등 전혀 다른 구조의 메트릭도 동일한 레이아웃 컴포넌트를 공유하면서, 원하는 섹션을 자유롭게 배치할 수 있게 됩니다.
+
+---
+
+## 결론
+
+이전 4단계 설계를 크게 바꾸지 않더라도, **프레젠테이션 계층**(MetricCardLayout)에 **슬롯**(or 섹션) 개념을 도입하면 “Cycle Time Breakdown”, “DORA 메트릭”처럼 **서로 다른 UI**도 **단일 MetricCard** 프레임워크 안에서 표현할 수 있습니다. 
+
+- **Container**: 어떤 메트릭인지(사이클 타임? DORA?), 어떤 API를 쓸지, 탭/필터 상태는 어떻게 관리할지를 담당  
+- **Custom Hook**: 메트릭별 데이터를 fetch/가공  
+- **MetricCardLayout**: 레이아웃/스타일 담당 (타이틀, 요약, 탭, 차트 등은 슬롯에 주입)  
+- **세부 UI 컴포넌트**(CycleTimeSummary, DoraSummary, ...): 실제 숫자나 차트 렌더링
+
+이렇게 단계별로 수정하면, “MetricsCard”를 하나만 만들어도 다양한 화면(“Cycle Time”, “DORA”, 그 외 지표)을 모두 커버하면서, **코드 중복**과 **UI 일관성**을 유지할 수 있습니다.

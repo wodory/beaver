@@ -1,0 +1,217 @@
+---
+description: 
+globs: 
+alwaysApply: false
+---
+**UI 구조 리펙토링**
+- [ ] 전체 그리드 시스템
+
+**UI와 데이터/프로세스의 분리**
+
+아래는 **컨테이너/프레젠테이션 패턴**과 **커스텀 훅**을 결합하여, 현재와 같은 대시보드 UI를 좀 더 구조적으로 설계하는 방법을 구체적으로 설명한 것입니다. 주요 포인트는 **데이터 로직**(fetching, 상태 관리, 필터/날짜 범위 등)과 **UI 렌더**(차트, 테이블, 카드 등)를 명확히 분리하고, **중복되는 로직**은 커스텀 훅으로 추출하여 재사용성을 높이는 것입니다.
+
+---
+
+## 1. 전반적인 구조: 컨테이너 + 프레젠테이션 + 커스텀 훅
+
+1. **컨테이너 컴포넌트(Container)**  
+   - **주된 역할**: 
+     - 백엔드 REST API(또는 Zustand 스토어)에서 데이터 가져오기  
+     - 날짜 범위, 필터(프로젝트/팀/개인 등) 상태 관리  
+     - 로딩/에러 상태 관리  
+     - 데이터를 “프레젠테이션 컴포넌트”가 **그리기**에 알맞은 형태로 가공  
+   - **주의점**:  
+     - UI 로직을 최소화하고, 순수하게 “무엇을 어떻게 가져와서 어떤 데이터로 가공할지”에 집중  
+     - `useTeamMetrics`, `useProjectMetrics` 같은 커스텀 훅을 호출해 데이터를 얻고, 이를 하위 컴포넌트에 props로 넘김
+
+2. **프레젠테이션 컴포넌트(Presentation / UI)**  
+   - **주된 역할**:  
+     - 받은 props(데이터, 로딩 여부 등)를 **시각적**으로 표현 (카드, 차트, 표, 통계 수치 등)  
+     - UI 이벤트(버튼 클릭 등) 발생 시 컨테이너 쪽으로 콜백 전달  
+   - **주의점**:  
+     - API나 Zustand 스토어에 직접 접근하지 않고, 오직 props로 주어진 데이터만 사용  
+     - 날짜나 팀 선택 상태를 직접 변경하지 않으며, 단지 UI만 렌더
+
+3. **커스텀 훅(Custom Hooks)**  
+   - **주된 역할**:  
+     - 여러 컨테이너에서 반복되는 **데이터 fetch**나 **상태 제어** 로직을 재사용  
+     - 예: `useTeamMetrics(teamId, startDate, endDate)` → 팀 메트릭 API 호출, 캐싱, 에러/로딩 관리  
+     - 예: `useProjectMetrics(projectId, dateRange)` → 프로젝트 메트릭 API 호출, 상태 저장  
+   - **주의점**:  
+     - 훅 내부에서 REST API나 Zustand store 접근, 데이터 가공 로직을 수행하고, 컨테이너가 필요로 하는 **결과/상태**를 반환  
+     - 훅은 **UI 로직**(스타일, 레이아웃) 없이 **순수 비즈니스 로직**에 집중
+
+---
+
+## 2. 예시 화면별 적용 방안
+
+### 2.1 팀 메트릭 화면 (예: “프로젝트/팀 메트릭”)
+
+![Team Metrics Screenshot](mdc:https:/user-images.githubusercontent.com/team-metrics.png)
+
+1. **TeamMetricsContainer** (컨테이너)  
+   - 팀 이름, 날짜 범위, 기타 필터(예: 프로젝트 선택)를 **상태**로 관리  
+   - 예: `const [teamName, setTeamName] = useState('프로젝트C 팀');`  
+   - **커스텀 훅** `useTeamMetrics(teamName, startDate, endDate)` 호출 → `{ data, isLoading, error }` 리턴  
+   - 로딩 상태나 에러 발생 시 UI가 어떻게 보여야 할지 결정(예: 로딩 스피너, 에러 메시지)  
+   - 최종적으로 `TeamMetricsView` (프레젠테이션)에게 `data`, `isLoading`, `error`, `onTeamSelect`(콜백) 등을 props로 넘김
+
+2. **useTeamMetrics(teamName, start, end)** (커스텀 훅)  
+   ```tsx
+   export function useTeamMetrics(teamName: string, start: Date, end: Date) {
+     const [data, setData] = useState<TeamMetricData | null>(null);
+     const [isLoading, setIsLoading] = useState(false);
+     const [error, setError] = useState<string | null>(null);
+     
+     useEffect(() => {
+       if (!teamName) return;
+       setIsLoading(true);
+       fetch(`/api/metrics/team/${teamName}?start=${start}&end=${end}`)
+         .then(res => res.json())
+         .then(json => setData(json))
+         .catch(e => setError(e.message))
+         .finally(() => setIsLoading(false));
+     }, [teamName, start, end]);
+     
+     return { data, isLoading, error };
+   }
+   ```
+   - 실제 API 로직, 에러 핸들링, 상태 세팅이 이 훅 안에 들어있음  
+   - 재사용 가능: “팀 지표”가 필요한 다른 화면에서도 동일 훅 사용
+
+3. **TeamMetricsView** (프레젠테이션)  
+   ```tsx
+   interface TeamMetricsViewProps {
+     data?: TeamMetricData;
+     isLoading: boolean;
+     error?: string;
+     onTeamChange?: (team: string) => void;
+     onDateChange?: (range: DateRange) => void;
+   }
+   export function TeamMetricsView(props: TeamMetricsViewProps) {
+     const { data, isLoading, error, onTeamChange, onDateChange } = props;
+     
+     if (isLoading) return <Spinner />;
+     if (error) return <ErrorMessage error={error} />;
+     
+     return (
+       <div>
+         <TeamFilter onChange={onTeamChange} />
+         <DateRangePicker onChange={onDateChange} />
+         <div className="grid grid-cols-4 gap-4">
+           <Card title="커밋 수" value={data?.commitCount} />
+           <Card title="PR 수" value={data?.prCount} />
+           <Card title="병합 비율" value={`${(data?.mergeRate*100).toFixed(1)}%`} />
+           <Card title="리뷰 수" value={data?.reviewCount} />
+         </div>
+         <Chart data={data?.chartData} /* etc... */ />
+       </div>
+     );
+   }
+   ```
+   - **UI만** 담당. Metric 데이터를 어떻게 가져왔는지 모름  
+   - 필요 시 `<Chart>` 컴포넌트, `<Card>` 컴포넌트 등을 조합  
+   - 상위에서 받은 `onTeamChange`, `onDateChange` 콜백을 통해 컨테이너의 상태 변경 로직에 연결
+
+4. **구조 요약**  
+   - `TeamMetricsContainer`가 state와 훅(`useTeamMetrics`)을 통해 데이터를 관리  
+   - **로딩/에러 분기** → `TeamMetricsView`에 props로 전달  
+   - `TeamMetricsView`는 UI 렌더 + 필터/날짜 변경 시 컨테이너로 이벤트 콜백 전달  
+
+### 2.2 “프로젝트별 활동” 화면 (예: “프로젝트 활동”, “리포지토리별 메트릭”)
+
+1. **ProjectActivityContainer** (컨테이너)  
+   - 현재 선택된 프로젝트, 기간, 필터를 state로 보관  
+   - `useProjectMetrics(projectId, dateRange)` 커스텀 훅 호출  
+   - 프레젠테이션 컴포넌트 `ProjectActivityView`에게 `{ data, isLoading, error, onProjectChange, onDateChange }` 등 전달
+
+2. **useProjectMetrics(projectId, start, end)** (커스텀 훅)  
+   - `/api/metrics/project/:id` REST API 호출  
+   - PR 수, 커밋 수, 배포 빈도, DORA 지표 등 받아와 `ProjectMetricData` 형태로 반환  
+   - 로직이 중복되는 부분(예: dateRange 파싱, 로딩/에러 처리)은 재사용
+
+3. **ProjectActivityView** (프레젠테이션)  
+   - 카테고리 탭(커밋, 기여자, PR 수, 병합 타임 등)을 UI로 표시  
+   - 실제 데이터 그래프(예: Shadcn Chart, Recharts) 렌더  
+   - “프로젝트 선택” 드롭다운 변경 시 상위 컨테이너로 콜백 전송
+
+---
+
+## 3. 커스텀 훅으로 분리할 로직의 예시
+
+1. **useDateRange**  
+   - 여러 화면에서 날짜 범위를 선택하고, 그 값을 관리 + validate(시작일 <= 종료일) 로직이 반복된다면 `useDateRange` 훅으로 추출  
+   - 이 훅은 `[startDate, endDate, setStartDate, setEndDate]` 등을 반환하고, 자동으로 유효성 검사를 수행  
+2. **useFetch** (Generic)  
+   - 단순 fetch 로직을 반복 사용한다면, URL/옵션을 받아 `{ data, loading, error, refetch }`를 반환하는 **범용 훅**을 만들 수도 있음  
+3. **useMetricsFilters**  
+   - 팀, 프로젝트, 개인 등 여러 필터가 동시에 적용되는 복잡한 화면이라면, 이들 필터 상태를 하나의 훅에서 관리  
+   - 예: `const { team, project, setTeam, setProject, dateRange, setDateRange } = useMetricsFilters();`  
+   - 각 페이지(컨테이너)에서 공통적으로 사용 가능  
+
+---
+
+## 4. 폴더 구조 예시
+
+프로젝트 규모가 커질수록 폴더 구조를 명확히 하면 유지보수가 쉬워집니다. 예:
+
+```
+src/
+├─ components/
+│   ├─ TeamMetricsView.tsx        // 프레젠테이션 컴포넌트
+│   ├─ ProjectActivityView.tsx    // 프레젠테이션 컴포넌트
+│   ├─ ...
+├─ containers/
+│   ├─ TeamMetricsContainer.tsx   // 컨테이너 컴포넌트
+│   ├─ ProjectActivityContainer.tsx
+│   ├─ ...
+├─ hooks/
+│   ├─ useTeamMetrics.ts
+│   ├─ useProjectMetrics.ts
+│   ├─ useDateRange.ts
+│   ├─ ...
+├─ pages/
+│   ├─ TeamMetricsPage.tsx        // 라우팅에 연결된 실제 페이지
+│   ├─ ProjectActivityPage.tsx
+│   └─ ...
+├─ store/ (Zustand or Redux slices)
+├─ services/ (API 호출 로직, fetch utils)
+└─ ...
+```
+
+- **pages/**: 실제 라우트에 연결된 페이지. 페이지 내에서 컨테이너를 불러 사용  
+- **containers/**: 각 기능별 컨테이너 컴포넌트(상태 + 데이터 fetching)  
+- **components/**: UI 중심의 프레젠테이션 컴포넌트  
+- **hooks/**: 재사용 가능한 로직 (데이터 fetching, 상태 관리)  
+
+---
+
+## 5. 실제 적용 시 주의사항
+
+1. **컴포넌트의 ‘크기’**  
+   - 너무 많은 로직이 한 컨테이너에 몰리면 오히려 복잡해질 수 있습니다. 필요한 경우 컨테이너를 더 잘게 쪼개거나, 커스텀 훅을 세분화해 각 부분 로직을 나누세요.  
+2. **상태 관리**  
+   - 일정 규모 이상의 대시보드라면, “필터/기간/선택된 팀” 등 전역 상태를 관리하는 **Zustand** 스토어가 유용합니다.  
+   - 컨테이너는 Zustand를 구독해서 데이터 가져오고, 프레젠테이션은 props만 받아서 그립니다.  
+3. **디자인 시스템 & Storybook**  
+   - 팀원들이 공통 UI 컴포넌트를 공유할 때, Storybook 등으로 문서화하면, “MetricCard”나 “LargeTab” 같은 컴포넌트를 재사용하기 편리해집니다.  
+4. **디렉토리 간 의존성**  
+   - 프레젠테이션 컴포넌트가 hooks나 store를 import하지 않도록 의존성을 철저히 관리해야 합니다.  
+   - 컨테이너에서만 hooks/store를 import하고, 프레젠테이션에는 순수 props만 내려보냅니다.  
+
+---
+
+## 6. 요약
+
+- **컨테이너/프레젠테이션 패턴**을 적용하면, “대시보드 화면에서 어떤 데이터를 어떻게 가져와서 가공할지”는 컨테이너가 담당하고, “화면에 어떻게 그릴지”는 프레젠테이션 컴포넌트가 담당하게 됩니다.  
+- **커스텀 훅**을 통해 “팀 메트릭 fetch 로직”, “프로젝트 메트릭 fetch 로직”, “공통 필터/날짜 로직” 등을 재사용 가능하게 추출하면, 새로운 화면을 만들 때 **로직을 복붙**하지 않아도 됩니다.  
+- 결과적으로 **UI 코드**(차트, 카드, 탭 등)는 단순화되고, **비즈니스 로직**(API 호출, 데이터 변환, 상태 관리)은 컨테이너와 훅에 명확히 분산되므로 유지보수가 쉬워집니다.  
+- 실제 화면(페이지)에서는 “컨테이너 → 프레젠테이션” 구조가 겹겹이 중첩될 수 있으나, 각 레벨의 책임이 분명해지므로 대규모 팀 개발에서도 충돌 없이 협업할 수 있습니다.
+
+이와 같은 접근으로 설계하면, 현재 주니어 개발자가 만든 페이지들을 **단계적으로** 컨테이너/프레젠테이션 구조로 전환하면서, 각 화면에서 중복되는 데이터 fetching/가공 로직을 커스텀 훅으로 뽑아낼 수 있을 것입니다. 
+
+**결과**:  
+- “UI(디자인, 차트, 카드)”와 “메트릭 로직(API, 상태)”가 깔끔하게 분리  
+- 필요한 화면마다 **새로운 컨테이너** + **기존 프레젠테이션 컴포넌트** 조합만으로 빠르게 개발 가능  
+- 유지보수성 향상, 코드 가독성 및 테스트 편의성 상승  
+

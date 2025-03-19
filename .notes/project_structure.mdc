@@ -1,0 +1,119 @@
+---
+description: 
+globs: 
+alwaysApply: false
+---
+## 1. 원칙
+
+- **서비스 레이어와 훅의 역할 분담**  
+  - **서비스 레이어**는 Axios나 Octokit과 같은 라이브러리를 사용해 외부 API(REST/GraphQL)를 호출하는 순수 함수들을 제공합니다.  
+  - **커스텀 훅**은 이러한 서비스 함수를 호출해 데이터 fetch, 캐싱, 로딩/에러 상태 관리를 담당합니다.  
+  - Feature별 전용 훅과 범용 공통 훅을 분리하여, 재사용성과 관심사의 분리를 극대화합니다.
+
+- **컴포넌트 네이밍 규칙**  
+  - 각 기능(예: 팀 메트릭, 프로젝트 메트릭 등)에 따라 **접두어**(Team, Project 등)를 붙여 네이밍하면 충돌을 피하고, 컴포넌트의 역할과 소속 도메인을 명확하게 할 수 있습니다.
+  - 파일 및 컴포넌트 이름은 React에서 일반적으로 **PascalCase**로 사용합니다.
+
+- **폴더 구조 중첩 최적화**  
+  - 작은 프로젝트에서는 단순한 “components, containers, hooks, pages, store, services” 구조가 충분하지만, 컴포넌트가 많아지면 **Feature(도메인) 기반**으로 재구성하는 것이 최신 트렌드입니다.
+  - Atomic Design이나 Feature-first 접근법을 적용해 관련 컴포넌트, 컨테이너, 훅, 서비스 코드를 하나의 도메인 폴더 내에 모으되, 중첩 깊이는 2~3단계로 제한하여 가독성과 관리 용이성을 높입니다.
+  - 논리적 그룹화를 유지하면서도 지나치게 깊은 폴더 구조는 피하는 것이 좋습니다.
+
+- **MetricCard와 같은 복합 컴포넌트**  
+  - UI와 Metric 로직을 분리해 **컨테이너/프레젠테이션 패턴**을 적용하면, 데이터 fetching 및 상태 관리는 컨테이너(및 커스텀 훅)에서, UI 렌더링은 프레젠테이션 컴포넌트에서 담당하게 되어 재사용성과 유지보수성이 높아집니다.
+  - 특히 “MetricCard” 같은 컴포넌트는 **슬롯**(slot) 개념을 도입해 “타이틀/설명 영역”, “탭 영역”, “콘텐츠 영역”을 분리하면, 다양한 레이아웃과 데이터 표시를 한 컴포넌트 내에서 유연하게 처리할 수 있습니다.
+
+---
+
+## 2. 최종 프로젝트 폴더 구조
+
+```
+src/
+├─ components/          // 재사용 가능한 공통 UI 컴포넌트 (Atoms, Molecules, Organisms)
+│   ├─ atoms/
+│   │   ├─ Button.tsx
+│   │   ├─ Input.tsx
+│   │   └─ Spinner.tsx
+│   ├─ molecules/
+│   │   ├─ TabBar.tsx
+│   │   └─ MetricSummaryCard.tsx
+│   └─ organisms/
+│       └─ MetricCardLayout.tsx   // 슬롯 기반 MetricCard UI (타이틀, 설명, 탭, 콘텐츠)
+├─ features/            // 기능(도메인)별 모듈 (대시보드, 팀, 프로젝트 등)
+│   ├─ dashboard/
+│   │   ├─ containers/
+│   │   │   ├─ DoraCardContainer.tsx
+│   │   │   ├─ CycleTimeCardContainer.tsx
+│   │   │   └─ DashboardOverviewContainer.tsx
+│   │   ├─ views/
+│   │   │   ├─ DoraCardView.tsx
+│   │   │   ├─ CycleTimeCardView.tsx
+│   │   │   └─ DashboardOverviewView.tsx
+│   │   └─ hooks/
+│   │       ├─ useDoraMetrics.ts
+│   │       ├─ useCycleTimeMetrics.ts
+│   │       └─ useDashboardFilters.ts
+│   ├─ teamMetrics/
+│   │   ├─ containers/
+│   │   │   └─ TeamMetricsContainer.tsx
+│   │   ├─ views/
+│   │   │   └─ TeamMetricsView.tsx
+│   │   └─ hooks/
+│   │       └─ useTeamMetrics.ts
+│   ├─ projectMetrics/
+│   │   ├─ containers/
+│   │   │   └─ ProjectMetricsContainer.tsx
+│   │   ├─ views/
+│   │   │   └─ ProjectMetricsView.tsx
+│   │   └─ hooks/
+│   │       └─ useProjectMetrics.ts
+│   └─ settings/
+│       └─ SettingsPage.tsx    // 저장소, 팀 등 설정 페이지
+├─ pages/               // 라우트에 연결된 실제 페이지
+│   ├─ DashboardPage.tsx
+│   ├─ TeamMetricsPage.tsx
+│   ├─ ProjectMetricsPage.tsx
+│   └─ SettingsPage.tsx
+├─ services/            // 외부 API 호출 및 데이터 동기화 로직 (GitHub, JIRA 등)
+│   ├─ git/
+│   │   ├─ githubService.ts        // GitHub, GitHub Enterprise API 호출
+│   │   ├─ gitCollector.ts         // 로컬 Git 저장소 커밋 수집
+│   │   └─ repositoryManager.ts    // 저장소 클론/업데이트 관리
+│   ├─ jira/
+│   │   └─ jiraService.ts          // JIRA 이슈 데이터 연동
+│   ├─ syncManager.ts              // 전체 데이터 동기화 및 증분 업데이트 관리
+│   └─ integrations.ts             // 공통 인터페이스 및 어댑터 (VersionControlService, IssueTrackingService)
+├─ hooks/               // 공통 커스텀 훅 (예: useDateRange, useFetch)
+│   └─ useDateRange.ts
+├─ store/               // 전역 상태 관리 (Zustand 또는 Redux slices)
+├─ config/              // 환경설정 및 팀 정보 등 (예: teams.json, api config)
+├─ metrics/             // Metric 계산 수식 모듈 (TypeScript 모듈로 관리)
+│   └─ formulas.ts
+├─ styles/              // 전역 CSS, Tailwind 설정 관련 파일
+│   └─ index.css
+└─ utils/               // 공용 유틸리티 (로깅, 에러 핸들링 등)
+    └─ logger.ts
+```
+
+---
+
+## 3. 설명
+
+- **서비스 레이어와 훅**  
+  - `services/` 폴더에는 GitHub, JIRA 등 외부 API 호출과 데이터 동기화에 관한 로직을 모아두고,  
+  - `hooks/` 및 각 feature 폴더 내의 `hooks/`에서는 이 서비스 함수를 호출하여 상태 관리 및 데이터 가공을 담당하는 커스텀 훅을 작성합니다.  
+  - 이를 통해, 예를 들어 `useTeamMetrics`는 `services/git/githubService.ts`와 `services/jira/jiraService.ts`에서 데이터를 받아와 팀별 메트릭을 계산한 후, 컨테이너에 전달합니다.
+
+- **컴포넌트 네이밍 및 폴더 구조**  
+  - **Feature-first** 접근으로 각 기능별(대시보드, 팀, 프로젝트, 설정)로 폴더를 분리하여 관련 컴포넌트, 컨테이너, 훅을 함께 둡니다.  
+  - 이 방식은 **논리적 그룹화**와 **네임스페이스 효과**를 동시에 주어, `TeamMetricsView`와 `ProjectMetricsView`처럼 이름에 도메인이 포함되어 충돌을 방지합니다.
+  - 컴포넌트 이름은 기본적으로 **PascalCase**로, 공통 유틸리티나 훅은 camelCase 혹은 kebab-case로 관리합니다.
+
+- **폴더 구조 중첩 관리**  
+  - 각 feature 폴더는 최대 2~3단계 내로 구성하여, 너무 깊은 중첩을 피하고, 관련 파일들이 한 곳에 모이도록 합니다.
+  - 예를 들어, `features/dashboard/` 내부에 containers, views, hooks를 두어 논리적으로 구분하면서도 경로가 과도하게 길지 않도록 유지합니다.
+
+- **Metric 계산 수식 모듈화**  
+  - `metrics/formulas.ts` 파일에 지표 계산 로직을 함수 형태로 분리하여, 여러 모듈에서 공통적으로 사용하고 유지보수하기 쉽게 합니다.
+
+이 구조는 규모가 커져도 **유지보수와 확장성**을 고려한 최신 트렌드에 맞는 폴더 구성입니다. 앞으로 컴포넌트나 기능이 늘어나더라도, Feature 단위로 관리되므로 코드베이스의 조직이 체계적으로 유지될 것입니다.
