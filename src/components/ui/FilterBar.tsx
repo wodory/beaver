@@ -11,13 +11,15 @@ import { Label } from "@/components/ui/label";
 import { addDays, subDays } from "date-fns";
 import { fetchRepositories } from "@/api/client";
 
-// 임시 프로젝트 목록 (개발용)
+// 기본 프로젝트 목록 (API가 없을 때 사용)
 const FALLBACK_PROJECTS = [
   { id: "all", name: "모든 프로젝트" },
-  { id: "amplify-notify", name: "amplify-notify" },
-  { id: "apps-react", name: "apps-react" },
-  { id: "beaver", name: "beaver" },
-  { id: "api-gateway", name: "api-gateway" },
+  { id: "n3r/web-ui", name: "web-ui" },
+  { id: "wodory/beaver", name: "beaver" },
+  { id: "wodory/flowmate", name: "flowmate" },
+  { id: "se-framework/zero-js", name: "zero-js" },
+  { id: "pinpoint/pinpoint-naver", name: "pinpoint-naver" },
+  { id: "nelo/web-ui", name: "web-ui (nelo)" },
 ];
 
 // 기간 프리셋 목록
@@ -53,19 +55,24 @@ export function FilterBar({ children, onFilterChange, filterState }: FilterBarPr
   );
   const [isCustomDate, setIsCustomDate] = useState(selectedDatePreset === "custom");
   const [repositories, setRepositories] = useState<Array<{id: string, name: string}>>([
-    { id: "all", name: "모든 프로젝트" }
+    ...FALLBACK_PROJECTS
   ]);
   const [isLoading, setIsLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   // DB에서 저장소 목록 가져오기
   const loadRepositories = async () => {
     try {
       setIsLoading(true);
+      setError(null);
       
-      // API를 통해 저장소 목록 가져오기
+      // API를 통해 저장소 목록 가져오기 (DB에 저장된 데이터를 가져옴)
+      // 항상 최신 데이터를 사용하도록 forceRefresh를 true로 설정
       const response = await fetchRepositories(true);
       
       if (response && Array.isArray(response) && response.length > 0) {
+        console.log("DB에서 저장소 목록을 성공적으로 가져왔습니다:", response);
+        
         // API 응답에서 저장소 목록 변환
         const repoOptions = response.map(repo => ({
           id: repo.fullName,
@@ -78,28 +85,32 @@ export function FilterBar({ children, onFilterChange, filterState }: FilterBarPr
           ...repoOptions
         ]);
       } else {
-        // API 응답이 없거나 오류 발생 시 기본 옵션 사용
-        console.log('API에서 저장소 목록을 가져올 수 없습니다. 기본 옵션을 사용합니다.');
-        setRepositories([
-          { id: "all", name: "모든 프로젝트" },
-          ...FALLBACK_PROJECTS.slice(1)
-        ]);
+        console.log('DB에서 저장소 목록을 가져올 수 없습니다. 기본 옵션을 사용합니다.');
+        // 저장소가 없거나 API 요청 실패 시 기본 옵션 사용 (유지)
       }
     } catch (error) {
       console.error('저장소 목록을 가져오는 중 오류가 발생했습니다:', error);
-      // 오류 발생 시 기본 옵션 사용
-      setRepositories([
-        { id: "all", name: "모든 프로젝트" },
-        ...FALLBACK_PROJECTS.slice(1)
-      ]);
+      setError('저장소 목록을 가져오는 중 오류가 발생했습니다');
+      // 에러 발생 시에도 기본 옵션 유지
     } finally {
       setIsLoading(false);
     }
   };
 
-  // 컴포넌트 마운트 시 저장소 목록 로드
+  // 컴포넌트 마운트 및 내부 상태가 변경될 때마다 저장소 목록 로드 시도
   useEffect(() => {
-    loadRepositories();
+    loadRepositories().catch(err => {
+      console.error('저장소 목록 로드 실패:', err);
+    });
+    
+    // 5초마다 저장소 목록 갱신
+    const intervalId = setInterval(() => {
+      loadRepositories().catch(err => {
+        console.error('저장소 목록 주기적 로드 실패:', err);
+      });
+    }, 5000);
+    
+    return () => clearInterval(intervalId);
   }, []);
 
   // filterState가 외부에서 변경되면 내부 상태 업데이트
@@ -199,6 +210,11 @@ export function FilterBar({ children, onFilterChange, filterState }: FilterBarPr
     }
   };
 
+  // 저장소 목록 수동 새로고침
+  const handleRefreshRepositories = () => {
+    loadRepositories();
+  };
+
   return (
     <div className="flex flex-wrap items-center gap-4 w-full pb-4">
       <div className="flex flex-col gap-1.5 min-w-[150px]">
@@ -218,6 +234,7 @@ export function FilterBar({ children, onFilterChange, filterState }: FilterBarPr
             ))}
           </SelectContent>
         </Select>
+        {error && <p className="text-xs text-red-500 mt-1">{error}</p>}
       </div>
 
       <div className="flex flex-col gap-1.5 min-w-[120px]">

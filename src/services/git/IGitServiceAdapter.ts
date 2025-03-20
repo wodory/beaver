@@ -57,6 +57,7 @@ export interface RepositoryInfo {
   apiUrl?: string;
   apiToken?: string;
   localPath?: string | null;
+  lastSyncAt?: string | Date | null;
 }
 
 /**

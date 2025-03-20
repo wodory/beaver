@@ -12,9 +12,31 @@ const __dirname = dirname(__filename);
 // 환경 변수 로드
 dotenv.config();
 
-// config.json 로드
-const configPath = join(__dirname, '../config.json');
-const config = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
+// config.json 로드 전 디버깅 로그 추가
+try {
+  console.log('현재 디렉토리:', process.cwd());
+  console.log('__dirname:', __dirname);
+  
+  const configPath = join(__dirname, '../config.json');
+  console.log('설정 파일 경로:', configPath);
+  
+  if (!fs.existsSync(configPath)) {
+    console.error('설정 파일이 존재하지 않습니다:', configPath);
+    console.log('대신 기본 설정을 사용합니다.');
+    // 기본 설정 객체 정의
+    const config = {
+      "defaultPaths": {
+        "repoStorage": "./repos"
+      }
+    };
+  } else {
+    const config = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
+    console.log('로드된 설정:', config);
+  }
+} catch (error) {
+  console.error('설정 파일 로드 중 오류 발생:', error);
+  console.log('대신 기본 설정을 사용합니다.');
+}
 
 /**
  * SyncManager 테스트 실행

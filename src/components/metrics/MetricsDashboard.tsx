@@ -1,20 +1,19 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect } from 'react';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
-import { UserActivityChart } from './UserActivityChart';
-import { RepositoryActivityChart } from './RepositoryActivityChart';
-import { TeamActivityChart } from './TeamActivityChart';
-import { UserMetrics, RepositoryMetrics, TeamMetrics } from '../../services/metrics/MetricsService';
-import { MetricCard } from './metric-card';
-import { ComparisonChart } from './ComparisonChart';
-import { ActivityHeatmap } from './ActivityHeatmap';
-import { DeveloperTimeline } from './DeveloperTimeline';
-import { TimelineChart, TimelineEvent } from './TimelineChart';
-import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip, ResponsiveContainer } from 'recharts';
-import { HelpCircle } from 'lucide-react';
-import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
-import { format, addDays, subDays, differenceInDays } from 'date-fns';
+import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
+import { format, subDays, differenceInDays } from 'date-fns';
 import { ko } from 'date-fns/locale';
+import { FilterBar } from '../ui/FilterBar';
+import { 
+  fetchProjectMetrics,
+  fetchDeveloperMetrics,
+  fetchTeamMetrics
+} from '../../api/client';
+import { Skeleton } from '@/components/ui/skeleton';
+import { Alert, AlertTitle, AlertDescription } from '@/components/ui/alert';
+import { AlertCircle, Inbox } from 'lucide-react';
 
 // 필터 상태 타입 정의
 interface FilterState {
@@ -24,479 +23,530 @@ interface FilterState {
   datePreset?: string;
 }
 
-interface MetricsDashboardProps {
-  filterState: FilterState;
-}
-
-// 임시 차트 데이터
-const generateChartData = (days: number, min: number, max: number) => {
-  const data = [];
-  const today = new Date();
-  
-  for (let i = days; i >= 0; i--) {
-    const date = addDays(today, -i);
-    data.push({
-      date: format(date, 'yyyy-MM-dd'),
-      value: Math.floor(Math.random() * (max - min + 1)) + min
-    });
-  }
-  
-  return data;
-};
-
-export function MetricsDashboard({ filterState }: MetricsDashboardProps) {
+export function MetricsDashboard() {
   const [activeTab, setActiveTab] = useState('overview');
+  const [selectedRepo, setSelectedRepo] = useState('all');
+  const [selectedPeriod, setSelectedPeriod] = useState('30d');
+  const [startDate, setStartDate] = useState<Date>(() => subDays(new Date(), 30));
+  const [endDate, setEndDate] = useState<Date>(() => new Date());
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  
+  // API 데이터를 저장할 상태 변수들
+  const [projectMetrics, setProjectMetrics] = useState<any>(null);
+  const [developerMetrics, setDeveloperMetrics] = useState<any>(null);
+  const [teamMetrics, setTeamMetrics] = useState<any>(null);
+  
+  // 필터 변경 시 데이터 로드
+  useEffect(() => {
+    const loadMetrics = async () => {
+      if (!selectedRepo || selectedRepo === 'all') return;
+      
+      setLoading(true);
+      setError(null);
+      
+      try {
+        // 선택한 저장소의 메트릭스 데이터 로드
+        const projectData = await fetchProjectMetrics(
+          selectedRepo, 
+          startDate, 
+          endDate
+        );
+        setProjectMetrics(projectData);
+        
+        // 사용자 메트릭스 데이터 로드
+        const devData = await fetchDeveloperMetrics(
+          "1", 
+          startDate, 
+          endDate
+        );
+        setDeveloperMetrics(devData);
+        
+        // 팀 메트릭스 데이터 로드
+        const teamData = await fetchTeamMetrics(
+          "team1", 
+          startDate, 
+          endDate
+        );
+        setTeamMetrics(teamData);
+        
+      } catch (err) {
+        console.error('메트릭스 데이터 로드 실패:', err);
+        setError('메트릭스 데이터를 불러오는 중 오류가 발생했습니다.');
+      } finally {
+        setLoading(false);
+      }
+    };
+    
+    loadMetrics();
+  }, [selectedRepo, startDate, endDate]);
+  
+  // 필터 변경 핸들러
+  const handleFilterChange = (filters: FilterState) => {
+    setSelectedRepo(filters.project);
+    if (filters.startDate) setStartDate(filters.startDate);
+    if (filters.endDate) setEndDate(filters.endDate);
+  };
 
-  // Mock 데이터 생성
-  const mockUserData = useMemo<UserMetrics>(() => ({
-    userId: 1,
-    login: 'user1',
-    name: '사용자 1',
-    avatarUrl: 'https://github.com/identicons/user1.png',
-    commitCount: 125,
-    totalAdditions: 5240,
-    totalDeletions: 2130,
-    prCount: 34,
-    prMergedCount: 28,
-    reviewsGivenCount: 62,
-    activeCommitDays: 18,
-    activePrDays: 12,
-    startDate: filterState.startDate || new Date(new Date().setDate(new Date().getDate() - 30)),
-    endDate: filterState.endDate || new Date()
-  }), [filterState.startDate, filterState.endDate]);
-
-  const mockRepoData = useMemo<RepositoryMetrics>(() => ({
-    repositoryId: 1,
-    name: '프로젝트 A',
-    fullName: 'org/프로젝트-A',
-    commitCount: 345,
-    contributorCount: 8,
-    prCount: 78,
-    prMergedCount: 65,
-    reviewCount: 142,
-    totalAdditions: 15240,
-    totalDeletions: 8130,
-    avgTimeToFirstReview: 240, // 4시간
-    avgTimeToMerge: 1440, // 24시간
-    startDate: filterState.startDate || new Date(new Date().setDate(new Date().getDate() - 30)),
-    endDate: filterState.endDate || new Date()
-  }), [filterState.startDate, filterState.endDate]);
-
-  const mockTeamData = useMemo<TeamMetrics>(() => ({
-    teamId: 'team1',
-    teamName: '개발팀 A',
-    memberCount: 6,
-    commitCount: 520,
-    prCount: 95,
-    prMergedCount: 82,
-    reviewCount: 187,
-    totalAdditions: 28450,
-    totalDeletions: 12340,
-    avgTimeToFirstReview: 180, // 3시간
-    avgTimeToMerge: 1200, // 20시간
-    jiraIssuesCompletedCount: 28,
-    avgIssueResolutionTime: 72, // 72시간
-    startDate: filterState.startDate || new Date(new Date().setDate(new Date().getDate() - 30)),
-    endDate: filterState.endDate || new Date()
-  }), [filterState.startDate, filterState.endDate]);
+  // 데이터 없음 상태 확인
+  const hasNoData = useMemo(() => {
+    return !projectMetrics && !developerMetrics && !teamMetrics;
+  }, [projectMetrics, developerMetrics, teamMetrics]);
 
   // 기간 텍스트 생성
-  const getPeriodText = (filter: FilterState) => {
-    if (!filter.startDate || !filter.endDate) {
-      return "전체 기간";
-    }
-    
-    const dayDiff = differenceInDays(filter.endDate, filter.startDate);
-    
-    if (dayDiff <= 0) {
-      return "당일";
-    } else if (dayDiff < 7) {
-      return `최근 ${dayDiff}일`;
-    } else if (dayDiff === 7) {
-      return "최근 1주";
-    } else if (dayDiff <= 31) {
-      return `최근 ${Math.ceil(dayDiff / 7)}주`;
-    } else if (dayDiff <= 92) {
-      return `최근 ${Math.ceil(dayDiff / 30)}개월`;
-    } else {
-      return `${format(filter.startDate, 'yyyy.MM.dd', { locale: ko })} ~ ${format(filter.endDate, 'yyyy.MM.dd', { locale: ko })}`;
-    }
-  };
-
-  // 임시 차트 데이터 생성
-  const commitData = useMemo(() => generateChartData(30, 10, 100), []);
-  const prData = useMemo(() => generateChartData(30, 5, 25), []);
-  const reviewData = useMemo(() => generateChartData(30, 0, 50), []);
-
-  // 타임라인 이벤트 데이터 생성 함수 
-  const generateTimelineEvents = (): TimelineEvent[] => {
-    const now = new Date();
-    const startDate = filterState.startDate || subDays(now, 30);
-    const endDate = filterState.endDate || now;
-    const days = differenceInDays(endDate, startDate);
-    const events: TimelineEvent[] = [];
-
-    // 커밋 이벤트 생성
-    for (let i = 0; i <= days; i += Math.floor(Math.random() * 2) + 1) {
-      const date = addDays(startDate, i);
-      if (date > endDate) break;
-
-      const commitCount = Math.floor(Math.random() * 8) + 1;
-      events.push({
-        id: `commit-${i}`,
-        date: date.toISOString(),
-        type: 'commit',
-        value: commitCount,
-        label: `${commitCount}개의 커밋`,
-        description: `파일 ${Math.floor(Math.random() * 10) + 1}개 변경됨`
-      });
-    }
-
-    // PR 이벤트 생성
-    for (let i = 2; i <= days - 2; i += Math.floor(Math.random() * 4) + 3) {
-      const date = addDays(startDate, i);
-      if (date > endDate) break;
-
-      events.push({
-        id: `pr-${i}`,
-        date: date.toISOString(),
-        type: 'pr',
-        value: Math.floor(Math.random() * 2) + 1,
-        label: `PR #${Math.floor(Math.random() * 100) + 1}`,
-        description: '기능 구현 및 버그 수정'
-      });
-    }
-
-    // 이슈 이벤트 생성
-    for (let i = 1; i <= days - 1; i += Math.floor(Math.random() * 5) + 2) {
-      const date = addDays(startDate, i);
-      if (date > endDate) break;
-
-      events.push({
-        id: `issue-${i}`,
-        date: date.toISOString(),
-        type: 'issue',
-        value: Math.floor(Math.random() * 3) + 1,
-        label: `이슈 #${Math.floor(Math.random() * 100) + 1}`,
-        description: `새로운 이슈: ${Math.random() > 0.5 ? '버그' : '기능 요청'}`
-      });
-    }
-
-    // 리뷰 이벤트 생성
-    for (let i = 3; i <= days - 3; i += Math.floor(Math.random() * 4) + 2) {
-      const date = addDays(startDate, i);
-      if (date > endDate) break;
-
-      events.push({
-        id: `review-${i}`,
-        date: date.toISOString(),
-        type: 'review',
-        value: Math.floor(Math.random() * 4) + 1,
-        label: `PR #${Math.floor(Math.random() * 100) + 1} 리뷰`,
-        description: `${Math.random() > 0.7 ? '승인됨' : Math.random() > 0.5 ? '변경 요청됨' : '코멘트 추가됨'}`
-      });
-    }
-
-    // 릴리스 이벤트 생성
-    const releaseInterval = Math.max(5, Math.floor(days / 3));
-    for (let i = releaseInterval; i <= days; i += releaseInterval) {
-      const date = addDays(startDate, i);
-      if (date > endDate) break;
-
-      const versionParts = [1, Math.floor(i / releaseInterval), Math.floor(Math.random() * 10)];
-      events.push({
-        id: `release-${i}`,
-        date: date.toISOString(),
-        type: 'release',
-        value: Math.floor(Math.random() * 2) + 3,
-        label: `v${versionParts.join('.')} 릴리스`,
-        description: '새로운 버전 배포'
-      });
-    }
-
-    return events;
-  };
+  const dateRangeText = useMemo(() => {
+    const koreanDateFormat = 'yyyy년 M월 d일';
+    return `${format(startDate, koreanDateFormat, { locale: ko })} ~ ${format(endDate, koreanDateFormat, { locale: ko })}`;
+  }, [startDate, endDate]);
 
   return (
-    <div className="space-y-8">
-      <div className="flex flex-col">
-        <h1 className="text-2xl font-bold tracking-tight">GitHub 메트릭스 대시보드</h1>
-        <p className="text-muted-foreground">
-          {getPeriodText(filterState)} 동안의 개발 활동 지표를 확인하세요.
-        </p>
+    <div className="space-y-6">
+      <div className="flex items-center justify-between">
+        <h1 className="text-3xl font-bold">개발 메트릭스 대시보드</h1>
+        <Badge variant="outline" className="px-3 py-1">
+          {dateRangeText}
+        </Badge>
       </div>
 
-      <Tabs defaultValue="overview" value={activeTab} onValueChange={setActiveTab} className="w-full">
-        <TabsList className="w-full border-b rounded-none justify-start max-w-4xl">
-          <TabsTrigger value="overview">개요</TabsTrigger>
-          <TabsTrigger value="user">개발자</TabsTrigger>
-          <TabsTrigger value="repository">저장소</TabsTrigger>
-          <TabsTrigger value="team">팀</TabsTrigger>
-          <TabsTrigger value="comparison">비교</TabsTrigger>
-          <TabsTrigger value="events">이벤트</TabsTrigger>
-        </TabsList>
-
-        {/* 개요 대시보드 */}
-        <TabsContent value="overview" className="space-y-6">
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-            <MetricCard
-              title="총 커밋 수"
-              value="1,248"
-              subValue={`${mockUserData.commitCount + mockRepoData.commitCount + mockTeamData.commitCount} 건`}
-              change={{ value: 8, trend: "up" }}
-              status="Elite"
-              tooltip="모든 저장소의 총 커밋 수입니다."
-            />
-            <MetricCard
-              title="총 PR 수"
-              value="256"
-              subValue={`${mockUserData.prCount + mockRepoData.prCount + mockTeamData.prCount} 건`}
-              change={{ value: 12, trend: "up" }}
-              status="High"
-              tooltip="모든 저장소의 총 Pull Request 수입니다."
-            />
-            <MetricCard
-              title="평균 PR 리드 타임"
-              value="2.4일"
-              subValue="업계 평균 3.6일"
-              change={{ value: 15, trend: "down" }}
-              status="Elite"
-              tooltip="PR 생성부터 병합까지 소요된 평균 시간입니다."
-            />
-            <MetricCard
-              title="코드 변경량"
-              value="74.6K"
-              subValue="추가: 56.2K, 삭제: 18.4K"
-              change={{ value: 24, trend: "up" }}
-              status="High"
-              tooltip="총 코드 추가 및 삭제 라인 수입니다."
-            />
+      <FilterBar onFilterChange={handleFilterChange} />
+      
+      {/* 로딩 상태 UI 개선 */}
+      {loading && (
+        <div className="space-y-4">
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+            {[...Array(6)].map((_, i) => (
+              <Card key={i}>
+                <CardHeader className="pb-2">
+                  <Skeleton className="h-6 w-1/2" />
+                </CardHeader>
+                <CardContent>
+                  <Skeleton className="h-8 w-1/3 mb-2" />
+                  <Skeleton className="h-4 w-2/3" />
+                </CardContent>
+              </Card>
+            ))}
           </div>
-          
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mt-8">
-            <Card>
-              <CardHeader className="pb-3">
-                <CardTitle className="text-base">커밋 추이</CardTitle>
-                <CardDescription>일일 커밋 수 변화 그래프</CardDescription>
-              </CardHeader>
-              <CardContent className="p-0">
-                <div className="h-[300px]">
-                  <ResponsiveContainer width="100%" height="100%">
-                    <BarChart 
-                      data={commitData}
-                      margin={{ top: 20, right: 30, left: 0, bottom: 20 }}
-                    >
-                      <CartesianGrid strokeDasharray="3 3" vertical={false} />
-                      <XAxis 
-                        dataKey="date" 
-                        tickFormatter={(value) => format(new Date(value), 'MM.dd')}
-                        tick={{ fontSize: 12 }}
-                        tickMargin={10}
-                      />
-                      <YAxis tick={{ fontSize: 12 }} />
-                      <RechartsTooltip 
-                        formatter={(value: number) => [`${value} 건`, '커밋 수']}
-                        labelFormatter={(label) => format(new Date(label), 'yyyy년 MM월 dd일')}
-                      />
-                      <Bar 
-                        dataKey="value" 
-                        fill="var(--chart-deployment-frequency)" 
-                        radius={[4, 4, 0, 0]} 
-                      />
-                    </BarChart>
-                  </ResponsiveContainer>
-                </div>
-              </CardContent>
-            </Card>
-            
-            <Card>
-              <CardHeader className="pb-3">
-                <CardTitle className="text-base">활발한 저장소 TOP 5</CardTitle>
-                <CardDescription>커밋 수 기준</CardDescription>
-              </CardHeader>
-              <CardContent>
-                <div className="space-y-6">
-                  {['프로젝트 A', '프로젝트 B', '프로젝트 C', '프로젝트 D', '프로젝트 E'].map((repo, i) => (
-                    <div key={i} className="flex flex-col space-y-1">
-                      <div className="flex items-center justify-between">
-                        <span className="font-medium">{repo}</span>
-                        <span className="text-sm text-muted-foreground">{120 - i * 15} 커밋</span>
-                      </div>
-                      <div className="w-full h-2 bg-muted rounded-full overflow-hidden">
-                        <div 
-                          className="h-full bg-primary"
-                          style={{ width: `${(120 - i * 15) / 120 * 100}%` }}
-                        />
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </CardContent>
-            </Card>
+        </div>
+      )}
+      
+      {/* 에러 상태 UI 개선 */}
+      {error && (
+        <Alert variant="destructive" className="my-4">
+          <AlertCircle className="h-4 w-4" />
+          <AlertTitle>오류 발생</AlertTitle>
+          <AlertDescription>
+            {error}
+            <button 
+              className="underline ml-2" 
+              onClick={() => {
+                setLoading(true);
+                setError(null);
+                // 데이터 다시 로드 로직
+                const loadMetrics = async () => {
+                  if (!selectedRepo || selectedRepo === 'all') return;
+                  
+                  setLoading(true);
+                  setError(null);
+                  
+                  try {
+                    // 선택한 저장소의 메트릭스 데이터 로드
+                    const projectData = await fetchProjectMetrics(
+                      selectedRepo, 
+                      startDate, 
+                      endDate
+                    );
+                    setProjectMetrics(projectData);
+                    
+                    // 사용자 메트릭스 데이터 로드
+                    const devData = await fetchDeveloperMetrics(
+                      "1", 
+                      startDate, 
+                      endDate
+                    );
+                    setDeveloperMetrics(devData);
+                    
+                    // 팀 메트릭스 데이터 로드
+                    const teamData = await fetchTeamMetrics(
+                      "team1", 
+                      startDate, 
+                      endDate
+                    );
+                    setTeamMetrics(teamData);
+                    
+                  } catch (err) {
+                    console.error('메트릭스 데이터 로드 실패:', err);
+                    setError('메트릭스 데이터를 불러오는 중 오류가 발생했습니다.');
+                  } finally {
+                    setLoading(false);
+                  }
+                };
+                
+                loadMetrics();
+              }}
+            >
+              다시 시도
+            </button>
+          </AlertDescription>
+        </Alert>
+      )}
+      
+      {/* 데이터 없음 상태 UI */}
+      {!loading && !error && hasNoData && (
+        <div className="flex flex-col items-center justify-center p-8 text-center">
+          <div className="p-4 rounded-full bg-muted mb-4">
+            <Inbox className="h-12 w-12 text-muted-foreground" />
           </div>
-          
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-            <Card>
-              <CardHeader className="pb-3">
-                <CardTitle className="text-base">PR 현황</CardTitle>
-                <CardDescription>일일 PR 수 변화 그래프</CardDescription>
-              </CardHeader>
-              <CardContent className="p-0">
-                <div className="h-[300px]">
-                  <ResponsiveContainer width="100%" height="100%">
-                    <BarChart 
-                      data={prData}
-                      margin={{ top: 20, right: 30, left: 0, bottom: 20 }}
-                    >
-                      <CartesianGrid strokeDasharray="3 3" vertical={false} />
-                      <XAxis 
-                        dataKey="date" 
-                        tickFormatter={(value) => format(new Date(value), 'MM.dd')}
-                        tick={{ fontSize: 12 }}
-                        tickMargin={10}
-                      />
-                      <YAxis tick={{ fontSize: 12 }} />
-                      <RechartsTooltip 
-                        formatter={(value: number) => [`${value} 건`, 'PR 수']}
-                        labelFormatter={(label) => format(new Date(label), 'yyyy년 MM월 dd일')}
-                      />
-                      <Bar 
-                        dataKey="value" 
-                        fill="var(--chart-change-failure-rate)" 
-                        radius={[4, 4, 0, 0]} 
-                      />
-                    </BarChart>
-                  </ResponsiveContainer>
-                </div>
-              </CardContent>
-            </Card>
-            
-            <Card>
-              <CardHeader className="pb-3">
-                <CardTitle className="text-base">활발한 개발자 TOP 5</CardTitle>
-                <CardDescription>커밋 수 기준</CardDescription>
-              </CardHeader>
-              <CardContent>
-                <div className="space-y-6">
-                  {['개발자 A', '개발자 B', '개발자 C', '개발자 D', '개발자 E'].map((dev, i) => (
-                    <div key={i} className="flex flex-col space-y-1">
-                      <div className="flex items-center justify-between">
-                        <span className="font-medium">{dev}</span>
-                        <span className="text-sm text-muted-foreground">{85 - i * 10} 커밋</span>
+          <h3 className="text-lg font-medium mb-1">데이터가 없습니다</h3>
+          <p className="text-sm text-muted-foreground mb-4">
+            선택한 기간 또는 저장소에 대한 메트릭스 데이터가 없습니다.
+          </p>
+          <Button 
+            variant="outline" 
+            onClick={() => {
+              // 필터 초기화 또는 다른 기간 선택
+              setStartDate(subDays(new Date(), 30));
+              setEndDate(new Date());
+              if (selectedRepo !== 'all') {
+                setSelectedRepo('all');
+              }
+            }}
+          >
+            다른 기간 선택
+          </Button>
+        </div>
+      )}
+      
+      {/* 실제 데이터만 사용하고 더미 데이터 폴백 제거 */}
+      {!loading && !error && !hasNoData && (
+        <Tabs defaultValue="overview" value={activeTab} onValueChange={setActiveTab} className="w-full">
+          <TabsList className="w-full border-b rounded-none justify-start max-w-4xl">
+            <TabsTrigger value="overview">개요</TabsTrigger>
+            <TabsTrigger value="user">개발자</TabsTrigger>
+            <TabsTrigger value="repository">저장소</TabsTrigger>
+            <TabsTrigger value="team">팀</TabsTrigger>
+            <TabsTrigger value="comparison">비교</TabsTrigger>
+            <TabsTrigger value="events">이벤트</TabsTrigger>
+          </TabsList>
+
+          {/* 개요 탭 */}
+          <TabsContent value="overview">
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+              {projectMetrics && (
+                <>
+                  <Card>
+                    <CardHeader className="pb-2">
+                      <CardTitle>Pull Request</CardTitle>
+                    </CardHeader>
+                    <CardContent>
+                      <div className="text-3xl font-bold">{projectMetrics.prCount}</div>
+                      <div className="text-sm text-muted-foreground">
+                        병합됨: {projectMetrics.prMergedCount} ({Math.round(projectMetrics.prMergedCount / projectMetrics.prCount * 100)}%)
                       </div>
-                      <div className="w-full h-2 bg-muted rounded-full overflow-hidden">
-                        <div 
-                          className="h-full bg-primary"
-                          style={{ width: `${(85 - i * 10) / 85 * 100}%` }}
-                        />
+                    </CardContent>
+                  </Card>
+
+                  <Card>
+                    <CardHeader className="pb-2">
+                      <CardTitle>코드 변경</CardTitle>
+                    </CardHeader>
+                    <CardContent>
+                      <div className="text-3xl font-bold">{projectMetrics.totalAdditions + projectMetrics.totalDeletions} 라인</div>
+                      <div className="text-sm text-muted-foreground">
+                        추가: {projectMetrics.totalAdditions}, 삭제: {projectMetrics.totalDeletions}
                       </div>
-                    </div>
-                  ))}
-                </div>
-              </CardContent>
-            </Card>
-          </div>
-        </TabsContent>
+                    </CardContent>
+                  </Card>
 
-        {/* 개발자 지표 뷰 */}
-        <TabsContent value="user" className="space-y-6">
-          <Card>
-            <CardHeader>
-              <CardTitle>개발자 활동 지표</CardTitle>
-              <CardDescription>
-                개발자별 커밋, PR, 코드 변경량 등의 활동 지표를 확인하세요.
-              </CardDescription>
-            </CardHeader>
-            <CardContent>
-              <UserActivityChart userData={mockUserData} />
-            </CardContent>
-          </Card>
-        </TabsContent>
+                  <Card>
+                    <CardHeader className="pb-2">
+                      <CardTitle>리뷰 응답 시간</CardTitle>
+                    </CardHeader>
+                    <CardContent>
+                      <div className="text-3xl font-bold">{Math.round(projectMetrics.avgTimeToFirstReview / 60)} 시간</div>
+                      <div className="text-sm text-muted-foreground">
+                        평균 첫 리뷰 응답 시간
+                      </div>
+                    </CardContent>
+                  </Card>
 
-        {/* 저장소 지표 뷰 */}
-        <TabsContent value="repository" className="space-y-6">
-          <Card>
-            <CardHeader>
-              <CardTitle>저장소 활동 지표</CardTitle>
-              <CardDescription>
-                저장소별 커밋, PR, 리뷰 등의 활동 지표를 확인하세요.
-              </CardDescription>
-            </CardHeader>
-            <CardContent>
-              <RepositoryActivityChart repoData={mockRepoData} />
-            </CardContent>
-          </Card>
-        </TabsContent>
+                  <Card>
+                    <CardHeader className="pb-2">
+                      <CardTitle>PR 사이클 타임</CardTitle>
+                    </CardHeader>
+                    <CardContent>
+                      <div className="text-3xl font-bold">{Math.round(projectMetrics.avgTimeToMerge / 60)} 시간</div>
+                      <div className="text-sm text-muted-foreground">
+                        평균 PR 생성부터 병합까지 시간
+                      </div>
+                    </CardContent>
+                  </Card>
 
-        {/* 팀 지표 뷰 */}
-        <TabsContent value="team" className="space-y-6">
-          <Card>
-            <CardHeader>
-              <CardTitle>팀 활동 지표</CardTitle>
-              <CardDescription>
-                팀별 생산성 및 협업 지표를 확인하세요.
-              </CardDescription>
-            </CardHeader>
-            <CardContent>
-              <TeamActivityChart teamData={mockTeamData} />
-            </CardContent>
-          </Card>
-        </TabsContent>
+                  <Card>
+                    <CardHeader className="pb-2">
+                      <CardTitle>배포 빈도</CardTitle>
+                    </CardHeader>
+                    <CardContent>
+                      <div className="text-3xl font-bold">{projectMetrics.deploymentFrequency?.toFixed(1) || "N/A"} 회/일</div>
+                      <div className="text-sm text-muted-foreground">
+                        일평균 배포 횟수
+                      </div>
+                    </CardContent>
+                  </Card>
 
-        {/* 비교 분석 뷰 */}
-        <TabsContent value="comparison" className="space-y-6">
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-            <Card>
-              <CardHeader>
-                <CardTitle>팀 간 커밋 비교</CardTitle>
-                <CardDescription>
-                  팀별 커밋 수 비교 분석
-                </CardDescription>
-              </CardHeader>
-              <CardContent>
-                <div className="h-[300px] flex items-center justify-center text-muted-foreground">
-                  팀 간 커밋 비교 차트가 들어갈 자리입니다.
-                </div>
-              </CardContent>
-            </Card>
-            <Card>
-              <CardHeader>
-                <CardTitle>프로젝트 간 PR 비교</CardTitle>
-                <CardDescription>
-                  프로젝트별 PR 수 비교 분석
-                </CardDescription>
-              </CardHeader>
-              <CardContent>
-                <div className="h-[300px] flex items-center justify-center text-muted-foreground">
-                  프로젝트 간 PR 비교 차트가 들어갈 자리입니다.
-                </div>
-              </CardContent>
-            </Card>
-          </div>
-        </TabsContent>
-
-        {/* 이벤트 탭 컨텐츠 추가 */}
-        <TabsContent value="events" className="space-y-6">
-          <div className="grid gap-6">
-            <div className="grid grid-cols-1 gap-4">
-              <TimelineChart
-                title="개발 활동 타임라인"
-                description="최근 개발 활동을 시간 순으로 시각화합니다."
-                events={generateTimelineEvents()}
-                height={400}
-                referenceDate={
-                  filterState.startDate && filterState.endDate
-                    ? new Date(
-                        filterState.startDate.getTime() +
-                          (filterState.endDate.getTime() - filterState.startDate.getTime()) / 2
-                      ).toISOString()
-                    : undefined
-                }
-              />
+                  <Card>
+                    <CardHeader className="pb-2">
+                      <CardTitle>변경 실패율</CardTitle>
+                    </CardHeader>
+                    <CardContent>
+                      <div className="text-3xl font-bold">{(projectMetrics.changeFailureRate * 100).toFixed(1) || "N/A"}%</div>
+                      <div className="text-sm text-muted-foreground">
+                        문제가 발생한 배포 비율
+                      </div>
+                    </CardContent>
+                  </Card>
+                </>
+              )}
             </div>
-          </div>
-        </TabsContent>
-      </Tabs>
+          </TabsContent>
+
+          {/* 개발자 탭 */}
+          <TabsContent value="user">
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+              <Card>
+                <CardHeader className="pb-2">
+                  <CardTitle>개발자 활동</CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <div className="text-3xl font-bold">{developerMetrics?.commitCount} 커밋</div>
+                  <div className="text-sm text-muted-foreground">
+                    활동 일수: {developerMetrics?.activeCommitDays}일 (총 {differenceInDays(new Date(developerMetrics?.endDate), new Date(developerMetrics?.startDate))}일 중)
+                  </div>
+                </CardContent>
+              </Card>
+
+              <Card>
+                <CardHeader className="pb-2">
+                  <CardTitle>코드 변경</CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <div className="text-3xl font-bold">{developerMetrics?.totalAdditions + developerMetrics?.totalDeletions} 라인</div>
+                  <div className="text-sm text-muted-foreground">
+                    추가: {developerMetrics?.totalAdditions}, 삭제: {developerMetrics?.totalDeletions}
+                  </div>
+                </CardContent>
+              </Card>
+
+              <Card>
+                <CardHeader className="pb-2">
+                  <CardTitle>Pull Request</CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <div className="text-3xl font-bold">{developerMetrics?.prCount} PR</div>
+                  <div className="text-sm text-muted-foreground">
+                    병합됨: {developerMetrics?.prMergedCount} ({Math.round(developerMetrics?.prMergedCount / (developerMetrics?.prCount || 1) * 100)}%)
+                  </div>
+                </CardContent>
+              </Card>
+
+              <Card>
+                <CardHeader className="pb-2">
+                  <CardTitle>리뷰 활동</CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <div className="text-3xl font-bold">{developerMetrics?.reviewsGivenCount} 리뷰</div>
+                  <div className="text-sm text-muted-foreground">
+                    PR당 평균 리뷰: {(developerMetrics?.reviewsGivenCount / (developerMetrics?.prCount || 1)).toFixed(1)}개
+                  </div>
+                </CardContent>
+              </Card>
+            </div>
+          </TabsContent>
+
+          {/* 저장소 탭 */}
+          <TabsContent value="repository">
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+              <Card>
+                <CardHeader className="pb-2">
+                  <CardTitle>컨트리뷰터 수</CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <div className="text-3xl font-bold">{projectMetrics?.contributorCount || "N/A"}</div>
+                </CardContent>
+              </Card>
+
+              <Card>
+                <CardHeader className="pb-2">
+                  <CardTitle>리뷰 수</CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <div className="text-3xl font-bold">{projectMetrics?.reviewCount || "N/A"}</div>
+                </CardContent>
+              </Card>
+
+              <Card>
+                <CardHeader className="pb-2">
+                  <CardTitle>커밋 수</CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <div className="text-3xl font-bold">{projectMetrics?.commitCount || "N/A"}</div>
+                </CardContent>
+              </Card>
+
+              <Card>
+                <CardHeader className="pb-2">
+                  <CardTitle>코드 변경</CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <div className="text-3xl font-bold">{projectMetrics?.totalAdditions + projectMetrics?.totalDeletions} 라인</div>
+                  <div className="text-sm text-muted-foreground">
+                    추가: {projectMetrics?.totalAdditions}, 삭제: {projectMetrics?.totalDeletions}
+                  </div>
+                </CardContent>
+              </Card>
+
+              <Card>
+                <CardHeader className="pb-2">
+                  <CardTitle>리뷰 응답 시간</CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <div className="text-3xl font-bold">{Math.round(projectMetrics?.avgTimeToFirstReview / 60) || "N/A"} 시간</div>
+                  <div className="text-sm text-muted-foreground">
+                    평균 첫 리뷰 응답 시간
+                  </div>
+                </CardContent>
+              </Card>
+
+              <Card>
+                <CardHeader className="pb-2">
+                  <CardTitle>PR 사이클 타임</CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <div className="text-3xl font-bold">{Math.round(projectMetrics?.avgTimeToMerge / 60) || "N/A"} 시간</div>
+                  <div className="text-sm text-muted-foreground">
+                    평균 PR 생성부터 병합까지 시간
+                  </div>
+                </CardContent>
+              </Card>
+
+              <Card>
+                <CardHeader className="pb-2">
+                  <CardTitle>배포 빈도</CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <div className="text-3xl font-bold">{projectMetrics?.deploymentFrequency?.toFixed(1) || "N/A"} 회/일</div>
+                  <div className="text-sm text-muted-foreground">
+                    일평균 배포 횟수
+                  </div>
+                </CardContent>
+              </Card>
+
+              <Card>
+                <CardHeader className="pb-2">
+                  <CardTitle>변경 실패율</CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <div className="text-3xl font-bold">{(projectMetrics?.changeFailureRate * 100).toFixed(1) || "N/A"}%</div>
+                  <div className="text-sm text-muted-foreground">
+                    문제가 발생한 배포 비율
+                  </div>
+                </CardContent>
+              </Card>
+            </div>
+          </TabsContent>
+
+          {/* 팀 탭 */}
+          <TabsContent value="team">
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+              <Card>
+                <CardHeader className="pb-2">
+                  <CardTitle>팀 멤버 수</CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <div className="text-3xl font-bold">{teamMetrics?.memberCount || "N/A"}</div>
+                </CardContent>
+              </Card>
+
+              <Card>
+                <CardHeader className="pb-2">
+                  <CardTitle>커밋 수</CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <div className="text-3xl font-bold">{teamMetrics?.commitCount || "N/A"}</div>
+                </CardContent>
+              </Card>
+
+              <Card>
+                <CardHeader className="pb-2">
+                  <CardTitle>리뷰 수</CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <div className="text-3xl font-bold">{teamMetrics?.reviewCount || "N/A"}</div>
+                </CardContent>
+              </Card>
+
+              <Card>
+                <CardHeader className="pb-2">
+                  <CardTitle>코드 변경</CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <div className="text-3xl font-bold">{teamMetrics?.totalAdditions + teamMetrics?.totalDeletions} 라인</div>
+                  <div className="text-sm text-muted-foreground">
+                    추가: {teamMetrics?.totalAdditions}, 삭제: {teamMetrics?.totalDeletions}
+                  </div>
+                </CardContent>
+              </Card>
+
+              <Card>
+                <CardHeader className="pb-2">
+                  <CardTitle>리뷰 응답 시간</CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <div className="text-3xl font-bold">{Math.round(teamMetrics?.avgTimeToFirstReview / 60) || "N/A"} 시간</div>
+                  <div className="text-sm text-muted-foreground">
+                    평균 첫 리뷰 응답 시간
+                  </div>
+                </CardContent>
+              </Card>
+
+              <Card>
+                <CardHeader className="pb-2">
+                  <CardTitle>PR 사이클 타임</CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <div className="text-3xl font-bold">{Math.round(teamMetrics?.avgTimeToMerge / 60) || "N/A"} 시간</div>
+                  <div className="text-sm text-muted-foreground">
+                    평균 PR 생성부터 병합까지 시간
+                  </div>
+                </CardContent>
+              </Card>
+
+              <Card>
+                <CardHeader className="pb-2">
+                  <CardTitle>배포 빈도</CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <div className="text-3xl font-bold">{teamMetrics?.deploymentFrequency?.toFixed(1) || "N/A"} 회/일</div>
+                  <div className="text-sm text-muted-foreground">
+                    일평균 배포 횟수
+                  </div>
+                </CardContent>
+              </Card>
+
+              <Card>
+                <CardHeader className="pb-2">
+                  <CardTitle>변경 실패율</CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <div className="text-3xl font-bold">{(teamMetrics?.changeFailureRate * 100).toFixed(1) || "N/A"}%</div>
+                  <div className="text-sm text-muted-foreground">
+                    문제가 발생한 배포 비율
+                  </div>
+                </CardContent>
+              </Card>
+            </div>
+          </TabsContent>
+        </Tabs>
+      )}
     </div>
   );
 } 

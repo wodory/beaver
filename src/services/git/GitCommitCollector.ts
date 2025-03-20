@@ -1,8 +1,8 @@
 import simpleGit, { SimpleGit } from 'simple-git';
 import { GitServiceFactory } from './GitServiceFactory';
-import { RepositoryInfo, CommitInfo } from './IGitServiceAdapter';
-import { dbAdapter } from '../../db';
-import { schemaToUse as schema } from '../../db';
+import { RepositoryInfo, CommitInfo } from './IGitServiceAdapter.js';
+import { dbAdapter } from '../../db/index.js';
+import { schemaToUse as schema } from '../../db/index.js';
 import { eq } from 'drizzle-orm';
 
 /**

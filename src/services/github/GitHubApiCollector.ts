@@ -1,6 +1,6 @@
 import { Octokit } from "@octokit/rest";
 import { graphql } from "@octokit/graphql";
-import { logger } from "../../utils/logger";
+import { logger } from "../../utils/logger.js";
 
 // 도메인 타입 정의
 interface Domain {
@@ -211,7 +211,6 @@ export class GitHubApiCollector {
       
       // since 파라미터가 없으면 현재로부터 90일 전을 기본값으로 설정
       const sinceDate = since || new Date(Date.now() - 90 * 24 * 60 * 60 * 1000);
-      const sinceISOString = sinceDate.toISOString();
       
       let hasNextPage = true;
       let endCursor: string | null = null;

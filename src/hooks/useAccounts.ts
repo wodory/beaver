@@ -282,7 +282,28 @@ export function useAccounts() {
       const repositories = settings.repositories || [];
       
       const updatedRepositories = repositories.filter(r => r.id !== repoId);
-      return await updateSettings({ repositories: updatedRepositories });
+      const success = await updateSettings({ repositories: updatedRepositories });
+      
+      if (success) {
+        // 캐시 강제 갱신을 위해 캐시 키 생성 및 삭제
+        try {
+          // 캐시 관련 함수 가져오기
+          const { removeFromCache, generateCacheKey } = await import('../utils/cache');
+          const key = generateCacheKey('/repositories');
+          removeFromCache(key);
+          console.log('저장소 캐시를 성공적으로 삭제했습니다:', key);
+          
+          // 페이지 새로고침 없이 저장소 목록 갱신
+          const { fetchRepositories } = await import('../api/client');
+          fetchRepositories(true)
+            .then(() => console.log('저장소 목록이 성공적으로 갱신되었습니다.'))
+            .catch(error => console.error('저장소 목록 갱신 중 오류:', error));
+        } catch (cacheError) {
+          console.error('캐시 초기화 중 오류:', cacheError);
+        }
+      }
+      
+      return success;
     } catch (err) {
       console.error('저장소 삭제 오류:', err);
       setError(err instanceof Error ? err : new Error('알 수 없는 오류가 발생했습니다.'));

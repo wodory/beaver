@@ -499,24 +499,15 @@ export class SettingsService {
       
       let result;
       
-      if (DB_TYPE === 'postgresql') {
-        console.log('[DEBUG] PostgreSQL 쿼리 실행');
-        // sql 태그드 템플릿이 아닌 execute 메서드 사용
-        const query = `
-          SELECT "data" FROM "settings" 
-          WHERE "type" = 'accounts' AND "user_id" = ${userId}
-          LIMIT 1
-        `;
-        console.log('[DEBUG] 실행할 쿼리:', query);
-        result = await db.execute(query);
-      } else {
-        console.log('[DEBUG] SQLite 쿼리 실행');
-        result = await db.execute(`
-          SELECT data FROM settings 
-          WHERE type = ? AND user_id = ? 
-          LIMIT 1
-        `, ['accounts', userId]);
-      }
+      console.log('[DEBUG] PostgreSQL 쿼리 실행');
+      // sql 태그드 템플릿이 아닌 execute 메서드 사용
+      const query = `
+        SELECT "data" FROM "settings" 
+        WHERE "type" = 'accounts' AND "user_id" = ${userId}
+        LIMIT 1
+      `;
+      console.log('[DEBUG] 실행할 쿼리:', query);
+      result = await db.execute(query);
       
       console.log('[DEBUG] DB 쿼리 결과:', result);
       

@@ -5,6 +5,9 @@
  * repositories 테이블을 업데이트합니다.
  */
 
+// dotenv를 맨 앞에서 로드하여 환경 변수를 설정합니다.
+import 'dotenv/config';
+
 import { initializeDatabase, getDB, closeDatabase } from '../db';
 import { schemaToUse as schema } from '../db';
 import { Repository } from '../types/settings';

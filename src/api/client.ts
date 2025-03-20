@@ -15,12 +15,19 @@ import { TimeSeriesPoint } from '../utils/time-series';
  * 기본 API 클라이언트 설정
  */
 const apiClient = axios.create({
-  baseURL: '/api',
+  baseURL: import.meta.env.DEV ? 'http://localhost:3001' : '/api',
   timeout: 10000,
   headers: {
     'Content-Type': 'application/json',
   }
 });
+
+/**
+ * 응답이 유효한 JSON인지 확인하는 헬퍼 함수
+ */
+const isValidJsonResponse = (data: any) => {
+  return data !== undefined && data !== null;
+};
 
 /**
  * 에러 핸들링 함수
@@ -44,32 +51,20 @@ const handleApiError = (error: any) => {
 };
 
 /**
- * JSON 응답 여부 확인
- */
-const isValidJsonResponse = (data: any): boolean => {
-  // HTML 응답인지 확인 (doctype이나 html 태그가 있는지)
-  if (typeof data === 'string' && (
-    data.toLowerCase().includes('<!doctype html>') || 
-    data.toLowerCase().includes('<html')
-  )) {
-    return false;
-  }
-  
-  // 객체나 배열인지 확인
-  return typeof data === 'object';
-};
-
-/**
  * 저장소 목록 가져오기
  */
 export const fetchRepositories = async (forceRefresh = false) => {
   const cacheKey = generateCacheKey('/repositories');
   
+  console.log('fetchRepositories 함수 호출됨, API URL:', import.meta.env.DEV ? 'http://localhost:3001' : '/api');
+  
   return cachedApiRequest(
     cacheKey,
     async () => {
       try {
+        console.log('저장소 목록 API 요청 시작...');
         const response = await apiClient.get('/repositories');
+        console.log('저장소 목록 API 응답 받음:', response.data);
         
         if (!isValidJsonResponse(response.data)) {
           console.error('저장소 목록 응답이 유효한 JSON이 아닙니다', response.data);
@@ -78,6 +73,7 @@ export const fetchRepositories = async (forceRefresh = false) => {
         
         return response.data;
       } catch (error) {
+        console.error('저장소 목록 API 호출 중 오류 발생:', error);
         return handleApiError(error);
       }
     },
@@ -90,13 +86,13 @@ export const fetchRepositories = async (forceRefresh = false) => {
  */
 export const fetchDeveloperMetrics = async (developerId: string, startDate: Date, endDate: Date, forceRefresh = false) => {
   const params = { developerId, from: startDate.toISOString(), to: endDate.toISOString() };
-  const cacheKey = generateCacheKey(`/metrics/developer/${developerId}`, params);
+  const cacheKey = generateCacheKey(`/metrics/developers/${developerId}`, params);
   
   return cachedApiRequest(
     cacheKey,
     async () => {
       try {
-        const response = await apiClient.get(`/metrics/developer/${developerId}`, {
+        const response = await apiClient.get(`/metrics/developers/${developerId}`, {
           params: { 
             from: startDate.toISOString(),
             to: endDate.toISOString()
@@ -122,13 +118,13 @@ export const fetchDeveloperMetrics = async (developerId: string, startDate: Date
  */
 export const fetchProjectMetrics = async (projectId: string, startDate: Date, endDate: Date, forceRefresh = false) => {
   const params = { projectId, from: startDate.toISOString(), to: endDate.toISOString() };
-  const cacheKey = generateCacheKey(`/metrics/project/${projectId}`, params);
+  const cacheKey = generateCacheKey(`/metrics/projects/${projectId}`, params);
   
   return cachedApiRequest(
     cacheKey,
     async () => {
       try {
-        const response = await apiClient.get(`/metrics/project/${projectId}`, {
+        const response = await apiClient.get(`/metrics/projects/${projectId}`, {
           params: { 
             from: startDate.toISOString(),
             to: endDate.toISOString()
@@ -154,18 +150,16 @@ export const fetchProjectMetrics = async (projectId: string, startDate: Date, en
  */
 export const fetchTeamMetrics = async (teamId: string, startDate: Date, endDate: Date, forceRefresh = false) => {
   const params = { teamId, from: startDate.toISOString(), to: endDate.toISOString() };
-  const cacheKey = generateCacheKey(`/metrics/team/${teamId}`, params);
+  const cacheKey = generateCacheKey(`/metrics/teams/${teamId}`, params);
   
   return cachedApiRequest(
     cacheKey,
     async () => {
       try {
-        // 백엔드 API 준비되기 전까지 더미 데이터 사용
+        // 백엔드 API 호출
         console.log('팀 메트릭스 API 요청 중...', teamId, startDate, endDate);
         
-        // 실제 구현 시 사용할 API 호출 코드 (주석 처리)
-        /* 
-        const response = await apiClient.get(`/metrics/team/${teamId}`, {
+        const response = await apiClient.get(`/metrics/teams/${teamId}`, {
           params: { 
             from: startDate.toISOString(),
             to: endDate.toISOString()
@@ -178,54 +172,9 @@ export const fetchTeamMetrics = async (teamId: string, startDate: Date, endDate:
         }
         
         return response.data;
-        */
-        
-        // 팀 ID에 따라 약간 다른 데이터를 반환하여 차별화
-        const teamMultiplier = parseInt(teamId.replace('team', '')) || 1;
-        
-        // 더미 데이터 반환
-        return {
-          teamId: teamId,
-          teamName: getTeamNameById(teamId),
-          memberCount: 4 + teamMultiplier,
-          commitCount: 100 * teamMultiplier,
-          prCount: 30 * teamMultiplier,
-          mergedPrCount: 25 * teamMultiplier,
-          reviewCount: 40 * teamMultiplier,
-          totalAdditions: 2000 * teamMultiplier,
-          totalDeletions: 1000 * teamMultiplier,
-          avgTimeToFirstReview: 60 + (15 * teamMultiplier), // 분 단위
-          avgTimeToMerge: 180 + (30 * teamMultiplier), // 분 단위
-          prMergeRate: 0.8 + (0.02 * teamMultiplier > 0.98 ? 0.98 : 0.02 * teamMultiplier),
-          jiraIssuesCount: 15 * teamMultiplier,
-          avgIssueResolutionTime: 24 + (6 * teamMultiplier), // 시간 단위
-          startDate: startDate.toISOString(),
-          endDate: endDate.toISOString(),
-          repositories: [`repo${teamMultiplier}`, `repo${teamMultiplier + 1}`, `repo${teamMultiplier + 2}`]
-        };
       } catch (error) {
         console.error('팀 메트릭스 가져오기 오류:', error);
-        
-        // 오류 발생 시에도 기본 더미 데이터 반환
-        return {
-          teamId: teamId,
-          teamName: getTeamNameById(teamId),
-          memberCount: 5,
-          commitCount: 152,
-          prCount: 48,
-          mergedPrCount: 42,
-          reviewCount: 78,
-          totalAdditions: 4250,
-          totalDeletions: 2180,
-          avgTimeToFirstReview: 127, // 분 단위
-          avgTimeToMerge: 320, // 분 단위
-          prMergeRate: 0.88,
-          jiraIssuesCount: 32,
-          avgIssueResolutionTime: 23, // 시간 단위
-          startDate: startDate.toISOString(),
-          endDate: endDate.toISOString(),
-          repositories: ['repo1', 'repo2', 'repo3']
-        };
+        return handleApiError(error);
       }
     },
     { forceRefresh }

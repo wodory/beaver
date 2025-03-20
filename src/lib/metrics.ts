@@ -1,5 +1,5 @@
 import { PullRequest, Review, Commit } from '../api/github';
-import { MetricsResult, PRStateTransition, DeploymentEvent } from '../types/github';
+import type { MetricsResult, DeploymentEvent } from '../types/github';
 
 /**
  * PR 개수 계산

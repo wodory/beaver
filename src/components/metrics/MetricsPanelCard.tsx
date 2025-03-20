@@ -5,6 +5,7 @@ import { Bar, BarChart, CartesianGrid, ResponsiveContainer, XAxis, YAxis, Toolti
 import { MetricsCard, MetricItem } from "./metrics-card";
 import { format, differenceInDays } from "date-fns";
 import { ko } from "date-fns/locale";
+import React from "react";
 
 // 상태별 색상 정의
 const STATUS_COLORS = {
@@ -23,77 +24,87 @@ const DATE_PRESETS = [
 ];
 
 // 샘플 차트 컴포넌트
-function MetricChart({ data, color }: { data: any; color: string }) {
+const MetricChart = React.memo(({ data, color }: { data: any; color: string }) => {
+  const chartHeight = useMemo(() => {
+    // 미디어 쿼리를 이용한 높이 조정 대신 useMediaQuery 사용 가능하지만
+    // 간단히 CSS 클래스로 대체
+    return "100%";
+  }, []);
+
   return (
-    <ResponsiveContainer width="100%" height="100%">
-      <BarChart 
-        data={data}
-        margin={{ top: 5, right: 20, bottom: 20, left: 0 }}
-      >
-        <defs>
-          <linearGradient id={`colorGradient-${color.replace('#', '')}`} x1="0" y1="0" x2="0" y2="1">
-            <stop offset="5%" stopColor={color} stopOpacity={0.8} />
-            <stop offset="95%" stopColor={color} stopOpacity={0.6} />
-          </linearGradient>
-        </defs>
-        <CartesianGrid strokeDasharray="3 3" vertical={false} opacity={0.2} />
-        <XAxis 
-          dataKey="date" 
-          fontSize={12}
-          tickMargin={10}
-          axisLine={false}
-          tickLine={false}
-          stroke="hsl(var(--muted-foreground))"
-          opacity={0.5}
-          minTickGap={32}
-          interval={data.length > 60 ? 6 : data.length > 30 ? 3 : 1}
-          tickFormatter={(value) => {
-            try {
-              const date = new Date(value);
-              if (isNaN(date.getTime())) {
+    <div className="chart-container">
+      <ResponsiveContainer width="100%" height={chartHeight}>
+        <BarChart 
+          data={data}
+          margin={{ top: 5, right: 20, bottom: 20, left: 0 }}
+        >
+          <defs>
+            <linearGradient id={`colorGradient-${color.replace('#', '')}`} x1="0" y1="0" x2="0" y2="1">
+              <stop offset="5%" stopColor={color} stopOpacity={0.8} />
+              <stop offset="95%" stopColor={color} stopOpacity={0.6} />
+            </linearGradient>
+          </defs>
+          <CartesianGrid strokeDasharray="3 3" vertical={false} opacity={0.2} />
+          <XAxis 
+            dataKey="date" 
+            fontSize={12}
+            tickMargin={10}
+            axisLine={false}
+            tickLine={false}
+            stroke="hsl(var(--muted-foreground))"
+            opacity={0.5}
+            minTickGap={32}
+            interval={data.length > 60 ? 6 : data.length > 30 ? 3 : 1}
+            tickFormatter={(value) => {
+              try {
+                const date = new Date(value);
+                if (isNaN(date.getTime())) {
+                  return "";
+                }
+                // 90일 이상인 경우 월-일 형식으로 표시
+                return format(date, 'MM.dd', { locale: ko });
+              } catch (e) {
                 return "";
               }
-              // 90일 이상인 경우 월-일 형식으로 표시
-              return format(date, 'MM.dd', { locale: ko });
-            } catch (e) {
-              return "";
-            }
-          }}
-        />
-        <YAxis 
-          fontSize={12}
-          tickMargin={10}
-          axisLine={false}
-          tickLine={false}
-          stroke="hsl(var(--muted-foreground))"
-          opacity={0.5}
-        />
-        <RechartsTooltip 
-          contentStyle={{ 
-            backgroundColor: 'hsl(var(--background))', 
-            borderColor: 'hsl(var(--border))',
-            borderRadius: '0.5rem',
-            boxShadow: '0 10px 15px -3px rgb(0 0 0 / 0.1), 0 4px 6px -4px rgb(0 0 0 / 0.1)',
-            fontSize: '12px',
-            fontFamily: 'inherit',
-            padding: '8px 12px'
-          }}
-          cursor={{ fill: `${color}15` }}
-          formatter={(value) => [`${value}`, '값']}
-          labelFormatter={(label) => `${label}`}
-        />
-        <Bar 
-          dataKey="value" 
-          fill={`url(#colorGradient-${color.replace('#', '')})`}
-          radius={[4, 4, 0, 0]}
-          maxBarSize={40}
-          animationDuration={500}
-          animationEasing="ease-in-out"
-        />
-      </BarChart>
-    </ResponsiveContainer>
+            }}
+          />
+          <YAxis 
+            fontSize={12}
+            tickMargin={10}
+            axisLine={false}
+            tickLine={false}
+            stroke="hsl(var(--muted-foreground))"
+            opacity={0.5}
+          />
+          <RechartsTooltip 
+            contentStyle={{ 
+              backgroundColor: 'hsl(var(--background))', 
+              borderColor: 'hsl(var(--border))',
+              borderRadius: '0.5rem',
+              boxShadow: '0 10px 15px -3px rgb(0 0 0 / 0.1), 0 4px 6px -4px rgb(0 0 0 / 0.1)',
+              fontSize: '12px',
+              fontFamily: 'inherit',
+              padding: '8px 12px'
+            }}
+            cursor={{ fill: `${color}15` }}
+            formatter={(value) => [`${value}`, '값']}
+            labelFormatter={(label) => `${label}`}
+          />
+          <Bar 
+            dataKey="value" 
+            fill={`url(#colorGradient-${color.replace('#', '')})`}
+            radius={[4, 4, 0, 0]}
+            maxBarSize={40}
+            animationDuration={500}
+            animationEasing="ease-in-out"
+          />
+        </BarChart>
+      </ResponsiveContainer>
+    </div>
   );
-}
+});
+
+MetricChart.displayName = 'MetricChart';
 
 // 기본 메트릭 데이터 생성 함수
 const generateMetricsData = (dateRange = 14, seed = 1): MetricItem[] => {
@@ -149,28 +160,36 @@ const generateMetricsData = (dateRange = 14, seed = 1): MetricItem[] => {
                 <HelpCircle className="h-4 w-4" />
               </span>
             </TooltipTrigger>
-            <TooltipContent>
-              <p className="w-[200px] text-xs">특정 기간 동안 프로덕션에 배포한 빈도</p>
+            <TooltipContent className="max-w-72">
+              <p className="mb-1">코드가 배포되는 빈도를 나타냅니다.</p>
+              <p>더 빠른 배포 주기는 더 나은 소프트웨어 전달 성능을 의미합니다.</p>
             </TooltipContent>
           </Tooltip>
         </div>
       ),
+      id: "deployment-frequency",
       value: deployFreq,
-      subValue: "매일 1회 이상",
+      subValue: `${prCount}개 PR 병합됨`,
       trend: {
-        value: 36,
-        direction: "up" as const
+        value: 12,
+        direction: "up"
       },
       status: "Elite",
       color: STATUS_COLORS.Elite,
       count: {
         value: prCount,
-        label: "PR"
+        label: "배포"
       },
-      chartData: dates.map(date => ({
-        date,
-        value: Math.floor(Math.random() * 40 * seed) + 10
-      }))
+      chartData: dates.map(date => {
+        // 요일에 따라 값 변경 (주말에는 적게)
+        const dayOfWeek = new Date(date).getDay();
+        const weekendFactor = dayOfWeek === 0 || dayOfWeek === 6 ? 0.3 : 1;
+        
+        return {
+          date,
+          value: Math.max(1, Math.floor(Math.random() * 8 * weekendFactor)),
+        };
+      })
     },
     {
       title: (
@@ -289,45 +308,88 @@ interface MetricsPanelCardProps {
 export function MetricsPanelCard({ filterState }: MetricsPanelCardProps) {
   const [activeMetricIndex, setActiveMetricIndex] = useState(0);
   
-  // filterState가 변경될 때마다 리렌더링되는 메트릭 데이터 계산
-  const metrics = useMemo(() => {
-    if (!filterState || !filterState.startDate || !filterState.endDate) {
-      return initialMetrics;
-    }
+  // 메트릭스 데이터 메모이제이션
+  const metricsData = useMemo(() => {
+    // 필터 상태에 따라 적절한 범위의 데이터 생성
+    const dateRange = filterState?.startDate && filterState?.endDate 
+      ? differenceInDays(filterState.endDate, filterState.startDate)
+      : 30;
+    
+    return generateMetricsData(dateRange, 1);
+  }, [filterState?.startDate, filterState?.endDate]);
 
-    const days = Math.abs(differenceInDays(filterState.startDate, filterState.endDate)) + 1;
-    return generateMetricsData(days);
-  }, [filterState]);
+  // 차트 데이터 메모이제이션
+  const charts = useMemo(() => {
+    return metricsData.map((metric) => ({
+      id: metric.id || `metric-${Math.random()}`,
+      data: metric.chartData,
+      color: STATUS_COLORS[metric.status as keyof typeof STATUS_COLORS] || '#64748b',
+    }));
+  }, [metricsData]);
   
-  // filterState가 변경될 때마다 새로운 함수 생성
-  const getSubtitle = useCallback(() => {
-    console.log('MetricsPanelCard - subtitle function called with filterState:', filterState);
-    
-    if (!filterState) {
-      return "최근 30일간의 주요 DevOps 메트릭스 데이터";
-    }
-
-    if (filterState.datePreset === "custom" && filterState.startDate && filterState.endDate) {
-      return `${format(filterState.startDate, 'yyyy/MM/dd', { locale: ko })} 부터 ${format(filterState.endDate, 'yyyy/MM/dd', { locale: ko })} 까지의 메트릭스 데이터`;
+  // 날짜 범위 정보 메모이제이션
+  const dateRangeInfo = useMemo(() => {
+    if (!filterState?.startDate || !filterState?.endDate) {
+      return "최근 30일";
     }
     
-    const preset = DATE_PRESETS.find(p => p.id === filterState.datePreset);
-    if (preset) {
-      return `${preset.name}간의 주요 DevOps 메트릭스 데이터`;
-    }
-    
-    return "최근 30일간의 주요 DevOps 메트릭스 데이터";
-  }, [filterState]);
+    const koreanDateFormat = 'yyyy년 M월 d일';
+    return `${format(filterState.startDate, koreanDateFormat, { locale: ko })} ~ ${format(filterState.endDate, koreanDateFormat, { locale: ko })}`;
+  }, [filterState?.startDate, filterState?.endDate]);
 
   return (
-    <MetricsCard
-      title="DORA 메트릭스"
-      subtitle={getSubtitle}
-      metrics={metrics}
-      activeMetricIndex={activeMetricIndex}
-      onMetricClick={setActiveMetricIndex}
-      chartComponent={MetricChart}
-      filterState={filterState}
-    />
+    <div className="space-y-6">
+      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-2">
+        <h2 className="text-2xl font-semibold">DORA 메트릭스</h2>
+        <div className="text-sm text-muted-foreground">
+          {dateRangeInfo}
+        </div>
+      </div>
+      
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        <MetricsCard
+          title="DORA 메트릭스"
+          subtitle="주요 DevOps 메트릭스 데이터"
+          metrics={metricsData}
+          activeMetricIndex={activeMetricIndex}
+          onMetricClick={setActiveMetricIndex}
+          chartComponent={MetricChart}
+          filterState={filterState}
+        />
+        
+        <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+          {charts.map((chart) => (
+            <div 
+              key={chart.id} 
+              className="bg-card border rounded-lg p-4 shadow-sm h-64 md:h-72"
+            >
+              <MetricChart data={chart.data} color={chart.color} />
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
   );
-} 
+}
+
+// 반응형 차트 스타일 추가
+const style = document.createElement('style');
+style.textContent = `
+  .chart-container {
+    width: 100%;
+    height: 300px;
+  }
+  
+  @media (max-width: 768px) {
+    .chart-container {
+      height: 250px;
+    }
+  }
+  
+  @media (max-width: 480px) {
+    .chart-container {
+      height: 200px;
+    }
+  }
+`;
+document.head.appendChild(style); 

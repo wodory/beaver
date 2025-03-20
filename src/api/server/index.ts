@@ -7,7 +7,9 @@ import Fastify, { FastifyInstance } from 'fastify';
 import { initializeDatabase, getDB } from '../../db/index.js';
 import { schemaToUse as schema } from '../../db/index.js';
 import { settingsRoutes } from './settings-api.js';
+import { metricsRoutes } from './metrics-api.js';
 import fastifyCors from '@fastify/cors';
+import { eq } from 'drizzle-orm';
 
 // 서버 인스턴스 생성
 export const fastify: FastifyInstance = Fastify({
@@ -29,6 +31,7 @@ export async function initializeServer() {
     
     // API 라우트 등록
     await fastify.register(settingsRoutes);
+    await fastify.register(metricsRoutes);
     
     // 저장소 목록 API 엔드포인트
     fastify.get('/repositories', async () => {
@@ -42,9 +45,73 @@ export async function initializeServer() {
       }
     });
     
+    // 저장소 동기화 API 엔드포인트 추가 (임시 목업)
+    fastify.post('/repositories/:id/sync', async (request, reply) => {
+      try {
+        const { id } = request.params as { id: string };
+        const { forceFull = false, syncJira = true } = request.body as { forceFull?: boolean, syncJira?: boolean };
+        
+        console.log(`저장소 ID ${id} 동기화 요청 수신 - forceFull: ${forceFull}, syncJira: ${syncJira}`);
+        
+        // 저장소 존재 여부 확인
+        const db = getDB();
+        const repositories = await db.select().from(schema.repositories).where(eq(schema.repositories.id, parseInt(id)));
+        
+        if (repositories.length === 0) {
+          return reply.status(404).send({ error: '저장소를 찾을 수 없습니다.' });
+        }
+        
+        // SyncManager를 통해 실제 동기화 수행
+        try {
+          // ESM 로더에서는 확장자를 .js로 변경
+          const { SyncManager } = await import('../../services/git/SyncManager.js');
+          const syncManager = new SyncManager();
+          
+          // 비동기로 동기화 작업 시작 (백그라운드에서 실행)
+          syncManager.syncRepository(parseInt(id), forceFull, syncJira)
+            .then(result => {
+              console.log(`저장소 ${id} 동기화 완료:`, result);
+              // 동기화 결과를 DB에 저장하거나 추가 작업 수행 가능
+            })
+            .catch(error => {
+              console.error(`저장소 ${id} 동기화 중 오류 발생:`, error);
+            });
+          
+          // 즉시 응답 반환 (작업은 백그라운드에서 계속)
+          return reply.status(202).send({ 
+            message: '저장소 동기화가 시작되었습니다.',
+            status: 'processing',
+            repositoryId: id,
+            forceFull,
+            syncJira,
+            timestamp: new Date().toISOString()
+          });
+        } catch (importError: any) {
+          console.error('SyncManager 모듈 로드 중 오류:', importError);
+          return reply.status(500).send({ 
+            error: '저장소 동기화 모듈 로드 실패', 
+            details: importError.message || '알 수 없는 오류',
+            stack: importError.stack || '스택 정보 없음'
+          });
+        }
+      } catch (error: any) {
+        console.error('저장소 동기화 API 오류:', error);
+        return reply.status(500).send({ 
+          error: '저장소 동기화 중 오류가 발생했습니다.',
+          details: error.message || '알 수 없는 오류',
+          stack: error.stack || '스택 정보 없음'
+        });
+      }
+    });
+    
     // 기본 라우트
     fastify.get('/', async () => {
       return { message: 'Beaver API 서버가 실행 중입니다.' };
+    });
+    
+    // 헬스체크 엔드포인트 추가
+    fastify.get('/healthz', async () => {
+      return { status: 'ok', timestamp: new Date().toISOString() };
     });
     
     return fastify;

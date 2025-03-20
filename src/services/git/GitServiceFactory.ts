@@ -1,9 +1,9 @@
-import { IGitServiceAdapter, RepositoryInfo } from './IGitServiceAdapter';
-import { GitHubAdapter } from './adapters/GitHubAdapter';
-import { GitHubEnterpriseAdapter } from './adapters/GitHubEnterpriseAdapter';
-import { GitLabAdapter } from './adapters/GitLabAdapter';
-import { MockGitHubAdapter } from './adapters/MockGitHubAdapter';
-import { MockGitHubEnterpriseAdapter } from './adapters/MockGitHubEnterpriseAdapter';
+import { IGitServiceAdapter, RepositoryInfo } from './IGitServiceAdapter.js';
+import { GitHubAdapter } from './adapters/GitHubAdapter.js';
+import { GitHubEnterpriseAdapter } from './adapters/GitHubEnterpriseAdapter.js';
+import { GitLabAdapter } from './adapters/GitLabAdapter.js';
+import { MockGitHubAdapter } from './adapters/MockGitHubAdapter.js';
+import { MockGitHubEnterpriseAdapter } from './adapters/MockGitHubEnterpriseAdapter.js';
 
 /**
  * Git 서비스 어댑터 생성 팩토리

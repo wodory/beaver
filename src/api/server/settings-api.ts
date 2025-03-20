@@ -51,6 +51,20 @@ async function updateRepositoriesTable(accountsSettings: AccountsSettings) {
     
     console.log(`기존 저장소 테이블에 ${existingRepos.length}개의 저장소가 있습니다.`);
     
+    // 설정에 있는 저장소의 fullName 목록
+    const configRepoFullNames = accountsSettings.repositories.map(repo => repo.fullName);
+    console.log('설정에 있는 저장소 목록:', configRepoFullNames);
+    
+    // 설정에 없는 저장소 삭제
+    for (const existingRepo of existingRepos) {
+      if (!configRepoFullNames.includes(existingRepo.fullName)) {
+        console.log(`설정에 없는 저장소 삭제: ${existingRepo.fullName} (ID: ${existingRepo.id})`);
+        await db.delete(schema.repositories)
+          .where(eq(schema.repositories.id, existingRepo.id))
+          .execute();
+      }
+    }
+    
     // 저장소 정보 순회하며 업데이트 또는 추가
     for (const repo of accountsSettings.repositories) {
       // 저장소 이름에서 소유자/이름 추출

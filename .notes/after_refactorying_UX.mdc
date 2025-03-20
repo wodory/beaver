@@ -1,0 +1,8 @@
+---
+description: 
+globs: 
+alwaysApply: false
+---
+- [ ] 깃헙 저장소에서 URL을 맨 위로 
+- [ ] 파싱 자동으로 (파싱 단추 삭제)
+- [ ] DB 업데이트 후 깜빡거림 금지. (부분적 로더 정도?)

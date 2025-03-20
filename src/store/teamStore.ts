@@ -1,7 +1,7 @@
 import { create } from 'zustand';
 import { fetchTeams, fetchTeamMetrics } from '../api/client';
 import { TeamMetrics } from '../types/metrics';
-import { clearCacheByPrefix } from '../utils/cache';
+import { clearCache } from '../utils/cache';
 
 export interface TeamState {
   // 팀 목록 관련 상태
@@ -159,7 +159,7 @@ export const useTeamStore = create<TeamState>((set, get) => ({
   
   // 캐시 초기화 액션
   clearCache: () => {
-    clearCacheByPrefix('beaver_cache_');
+    clearCache();
     console.log('캐시가 초기화되었습니다.');
   }
 })); 

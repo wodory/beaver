@@ -28,6 +28,7 @@
     "create-settings-db": "node --loader=ts-node/esm src/scripts/create-settings-table.js",
     "test:repo-manager": "tsx src/scripts/test-repository-manager.ts",
     "test:github": "tsx src/tests/github-api-test.ts",
+    "test:github-sync": "tsx src/tests/github-sync-test.ts",
     "test:sync": "tsx src/tests/sync-manager-test.ts",
     "test:metrics": "tsx src/tests/metrics-test.ts",
     "test:worker": "tsx src/tests/worker-manager-test.ts",

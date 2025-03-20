@@ -1,9 +1,18 @@
 /**
+ * 캐시 유틸리티
+ * 
+ * API 응답을 캐싱하여 불필요한 네트워크 요청을 줄입니다.
+ */
+
+/**
  * 캐시 항목 인터페이스
  */
 interface CacheItem<T> {
+  /** 캐시된 데이터 */
   data: T;
+  /** 캐시 생성 시간 (타임스탬프) */
   timestamp: number;
+  /** 캐시 만료 시간 (타임스탬프) */
   expiresAt: number;
 }
 
@@ -19,6 +28,25 @@ interface CacheOptions {
 
 // 기본 캐시 TTL: 5분
 const DEFAULT_CACHE_TTL = 5 * 60 * 1000;
+
+// 메모리 캐시 (localStorage를 사용할 수 없는 환경용)
+const memoryCache: Record<string, string> = {};
+
+// localStorage 사용 가능 여부 확인
+const isLocalStorageAvailable = (): boolean => {
+  try {
+    const testKey = '__test_localStorage__';
+    localStorage.setItem(testKey, 'test');
+    localStorage.removeItem(testKey);
+    return true;
+  } catch (e) {
+    console.warn('localStorage를 사용할 수 없습니다. 메모리 캐시를 사용합니다.', e);
+    return false;
+  }
+};
+
+// 로컬 스토리지 사용 가능 여부
+const useLocalStorage = isLocalStorageAvailable();
 
 /**
  * 캐시 키 생성 함수
@@ -61,7 +89,13 @@ export const generateCacheKey = (endpoint: string, params?: Record<string, any>)
  */
 export const getFromCache = <T>(key: string): T | null => {
   try {
-    const cachedItem = localStorage.getItem(key);
+    let cachedItem: string | null = null;
+    
+    if (useLocalStorage) {
+      cachedItem = localStorage.getItem(key);
+    } else {
+      cachedItem = memoryCache[key] || null;
+    }
     
     if (!cachedItem) {
       return null;
@@ -71,7 +105,11 @@ export const getFromCache = <T>(key: string): T | null => {
     
     // 캐시가 만료되었는지 확인
     if (Date.now() > expiresAt) {
-      localStorage.removeItem(key);
+      if (useLocalStorage) {
+        localStorage.removeItem(key);
+      } else {
+        delete memoryCache[key];
+      }
       return null;
     }
     
@@ -99,42 +137,62 @@ export const saveToCache = <T>(key: string, data: T, options?: CacheOptions): vo
       expiresAt: now + ttl
     };
     
-    localStorage.setItem(key, JSON.stringify(cacheItem));
+    const serialized = JSON.stringify(cacheItem);
+    
+    if (useLocalStorage) {
+      localStorage.setItem(key, serialized);
+    } else {
+      memoryCache[key] = serialized;
+    }
   } catch (error) {
     console.error('데이터를 캐시에 저장하는 중 오류 발생:', error);
   }
 };
 
 /**
- * 특정 키로 시작하는 모든 캐시 삭제
- * @param keyPrefix 캐시 키 접두사
+ * 캐시에서 항목 삭제
+ * @param key 캐시 키
  */
-export const clearCacheByPrefix = (keyPrefix: string): void => {
+export const removeFromCache = (key: string): void => {
   try {
-    // 해당 접두사로 시작하는 모든 키 찾기
-    const keysToRemove: string[] = [];
-    
-    for (let i = 0; i < localStorage.length; i++) {
-      const key = localStorage.key(i);
-      if (key && key.startsWith(keyPrefix)) {
-        keysToRemove.push(key);
-      }
+    if (useLocalStorage) {
+      localStorage.removeItem(key);
+    } else {
+      delete memoryCache[key];
     }
-    
-    // 모든 해당 키 삭제
-    keysToRemove.forEach(key => localStorage.removeItem(key));
-    
-    console.log(`캐시 삭제 완료: ${keysToRemove.length}개 항목 제거됨 (접두사: ${keyPrefix})`);
   } catch (error) {
-    console.error('캐시 삭제 중 오류 발생:', error);
+    console.error('캐시에서 항목을 삭제하는 중 오류 발생:', error);
   }
 };
 
 /**
- * 모든 API 캐시 삭제
+ * 모든 캐시 항목 삭제
  */
-export const clearAllCache = (): void => {
-  clearCacheByPrefix('beaver_cache_');
+export const clearCache = (): void => {
+  try {
+    if (useLocalStorage) {
+      // 'beaver_cache_' 접두사를 가진 항목만 삭제
+      const keysToRemove: string[] = [];
+      
+      for (let i = 0; i < localStorage.length; i++) {
+        const key = localStorage.key(i);
+        if (key && key.startsWith('beaver_cache_')) {
+          keysToRemove.push(key);
+        }
+      }
+      
+      keysToRemove.forEach(key => localStorage.removeItem(key));
+    } else {
+      // 메모리 캐시의 모든 항목 삭제
+      Object.keys(memoryCache).forEach(key => {
+        if (key.startsWith('beaver_cache_')) {
+          delete memoryCache[key];
+        }
+      });
+    }
+  } catch (error) {
+    console.error('캐시를 초기화하는 중 오류 발생:', error);
+  }
 };
 
 /**

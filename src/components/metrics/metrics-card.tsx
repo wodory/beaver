@@ -21,6 +21,7 @@ export interface MetricItem {
     label: string;
   };
   chartData?: any; // 차트 데이터 (구체적인 타입은 차트 컴포넌트에 따라 다름)
+  id?: string; // 메트릭 식별을 위한 ID
 }
 
 // 메트릭 버튼 렌더링을 위한 props
