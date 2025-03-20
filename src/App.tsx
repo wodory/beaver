@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react'
 // App.css는 index.css로 통합되었으므로 import 구문 제거
 import { AppSidebar } from './components/app-sidebar'
 import { SiteHeader } from './components/site-header'
-import { FilterBar } from './components/metrics/filter-bar'
+import { FilterBar, FilterState } from './components/ui/FilterBar'
 import { MetricsDashboard } from './components/metrics/MetricsDashboard'
 // import { DoraMetrics } from './components/metrics/dora-metrics'
 import { MetricsPanelCard } from './components/metrics/MetricsPanelCard'
@@ -11,13 +11,6 @@ import { TrendAnalysisView } from './components/metrics/TrendAnalysisView'
 import { SettingsPage } from './components/settings/SettingsPage'
 import { SidebarProvider } from '@/components/ui/sidebar'
 //import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs'
-
-interface FilterState {
-  project: string;
-  startDate: Date | null;
-  endDate: Date | null;
-  datePreset?: string;
-}
 
 function App() {
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false)

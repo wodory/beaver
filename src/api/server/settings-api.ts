@@ -4,6 +4,9 @@
 import { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 import { SettingsService } from './settings-service.js';
 import { UserSettings, GitHubSettings, JiraSettings, AccountsSettings } from '../../types/settings.js';
+import { getDB } from '../../db/index.js';
+import { schemaToUse as schema } from '../../db/index.js';
+import { eq } from 'drizzle-orm';
 
 // 기본 사용자 ID (현재는 단일 사용자 시스템)
 const DEFAULT_USER_ID = 1;
@@ -15,10 +18,89 @@ interface IdParams {
   userId?: string;
 }
 
+// 저장소 DB 레코드 타입 정의
+interface RepositoryRecord {
+  id: number;
+  name: string;
+  fullName: string;
+  cloneUrl: string;
+  localPath?: string;
+  type: string;
+  apiUrl?: string;
+  apiToken?: string;
+  lastSyncAt?: Date;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
 /**
  * SettingsService 인스턴스 생성
  */
 const settingsService = new SettingsService();
+
+/**
+ * 저장소 테이블 업데이트 함수
+ * @param accountsSettings 계정 설정 정보
+ */
+async function updateRepositoriesTable(accountsSettings: AccountsSettings) {
+  try {
+    const db = getDB();
+    
+    // 기존 저장소 정보 확인
+    const existingRepos = await db.select().from(schema.repositories) as RepositoryRecord[];
+    
+    console.log(`기존 저장소 테이블에 ${existingRepos.length}개의 저장소가 있습니다.`);
+    
+    // 저장소 정보 순회하며 업데이트 또는 추가
+    for (const repo of accountsSettings.repositories) {
+      // 저장소 이름에서 소유자/이름 추출
+      const fullName = repo.fullName;
+      const nameOnly = repo.name || fullName.split('/').pop() || fullName;
+      
+      // 같은 fullName을 가진 저장소가 이미 있는지 확인
+      const existingRepo = existingRepos.find(r => r.fullName === fullName);
+      
+      if (existingRepo) {
+        // 기존 저장소 업데이트
+        console.log(`저장소 업데이트: ${fullName}`);
+        
+        await db.update(schema.repositories)
+          .set({
+            name: nameOnly,
+            cloneUrl: repo.url,
+            type: repo.type,
+            apiUrl: repo.ownerReference ? 
+              accountsSettings.accounts.find(a => a.id === repo.owner)?.apiUrl || '' : '',
+            updatedAt: new Date()
+          })
+          .where(eq(schema.repositories.fullName, fullName));
+      } else {
+        // 새 저장소 추가
+        console.log(`저장소 추가: ${fullName}`);
+        
+        await db.insert(schema.repositories)
+          .values({
+            name: nameOnly,
+            fullName: fullName,
+            cloneUrl: repo.url,
+            type: repo.type,
+            apiUrl: repo.ownerReference ? 
+              accountsSettings.accounts.find(a => a.id === repo.owner)?.apiUrl || '' : '',
+            apiToken: repo.ownerReference ? 
+              accountsSettings.accounts.find(a => a.id === repo.owner)?.token || '' : '',
+            createdAt: new Date(),
+            updatedAt: new Date()
+          });
+      }
+    }
+    
+    console.log('저장소 테이블 업데이트를 완료했습니다.');
+    return true;
+  } catch (error) {
+    console.error('저장소 테이블 업데이트 실패:', error);
+    return false;
+  }
+}
 
 /**
  * API 엔드포인트 등록
@@ -90,6 +172,13 @@ export async function settingsRoutes(fastify: FastifyInstance) {
       
       if (success) {
         const updatedSettings = await settingsService.getAccountsSettings(userId);
+        
+        // repositories 테이블도 함께 업데이트
+        if (settings.repositories && settings.repositories.length > 0) {
+          console.log('저장소 정보가 업데이트되었습니다. repositories 테이블을 업데이트합니다.');
+          await updateRepositoriesTable(updatedSettings);
+        }
+        
         return reply.send(updatedSettings);
       } else {
         return reply.status(500).send({ error: '계정 설정을 업데이트할 수 없습니다.' });

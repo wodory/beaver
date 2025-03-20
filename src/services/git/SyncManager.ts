@@ -6,12 +6,23 @@ import { schemaToUse as schema } from '../../db';
 import { eq } from 'drizzle-orm';
 import fs from 'fs/promises';
 import path from 'path';
-import config from '../../config.json';
 import { GitHubApiCollector, GitHubApiSettings } from '../github/GitHubApiCollector';
 import { logger } from '../../utils/logger';
 import { JiraDataCollector, JiraCollectorSettings } from '../jira/JiraDataCollector';
 import { JiraIssue } from '../jira/IJiraAdapter';
 import { SettingsService } from '../../api/server/settings-service.js';
+
+/**
+ * 시스템 설정 인터페이스
+ */
+interface SystemSettings {
+  defaultPaths?: {
+    repoStorage?: string;
+  };
+  refreshInterval?: number;
+  language?: string;
+  [key: string]: any;
+}
 
 /**
  * 동기화 관리자
@@ -25,6 +36,7 @@ export class SyncManager {
   private jiraDataCollector: JiraDataCollector;
   private settingsService: SettingsService;
   private basePath: string;
+  private systemSettings: SystemSettings = {};
   
   constructor(useMockJira: boolean = false) {
     this.gitServiceFactory = GitServiceFactory.getInstance();
@@ -32,10 +44,117 @@ export class SyncManager {
     this.githubApiCollector = new GitHubApiCollector();
     this.jiraDataCollector = new JiraDataCollector(useMockJira);
     this.settingsService = new SettingsService();
-    this.basePath = config.defaultPaths?.repoStorage || './repos';
+    this.basePath = './repos'; // 기본값 설정
     
     // 설정 로드
     this.loadSettings();
+  }
+  
+  /**
+   * 시스템 설정을 DB에서 로드합니다.
+   */
+  private async getSystemSettings(): Promise<SystemSettings> {
+    try {
+      if (!getDB()) {
+        logger.error('데이터베이스가 초기화되지 않았습니다.');
+        return {};
+      }
+
+      // DB 타입에 관계없이 동작할 수 있도록 SQL 쿼리 직접 사용
+      const result = await getDB().execute(
+        `SELECT value FROM system_settings WHERE key = 'default_settings'`
+      );
+      
+      if (result && result.length > 0) {
+        // 결과에서 값을 추출하고 파싱
+        const settings = result[0].value;
+        return typeof settings === 'string' ? JSON.parse(settings) : settings;
+      }
+      
+      return {};
+    } catch (error) {
+      logger.error('시스템 설정을 로드하는 중 오류가 발생했습니다:', error);
+      return {};
+    }
+  }
+  
+  /**
+   * 시스템 설정을 DB에 저장합니다.
+   */
+  private async saveSystemSettings(settings: SystemSettings): Promise<void> {
+    try {
+      if (!getDB()) {
+        logger.error('데이터베이스가 초기화되지 않았습니다.');
+        return;
+      }
+      
+      // 시스템 설정이 이미 존재하는지 확인
+      const result = await getDB().execute(
+        `SELECT COUNT(*) as count FROM system_settings WHERE key = 'default_settings'`
+      );
+      
+      const count = parseInt(result[0].count);
+      
+      if (count > 0) {
+        // 기존 설정 업데이트
+        await getDB().execute(
+          `UPDATE system_settings SET value = $1, updated_at = NOW() WHERE key = 'default_settings'`,
+          [JSON.stringify(settings)]
+        );
+      } else {
+        // 새 설정 삽입
+        await getDB().execute(
+          `INSERT INTO system_settings (key, value) VALUES ('default_settings', $1)`,
+          [JSON.stringify(settings)]
+        );
+      }
+      
+      logger.info('시스템 설정이 DB에 저장되었습니다.');
+    } catch (error) {
+      logger.error('시스템 설정 저장 중 오류 발생:', error);
+    }
+  }
+  
+  /**
+   * 초기 설정을 DB에 설정합니다.
+   */
+  private async ensureDefaultSettings(): Promise<void> {
+    try {
+      // 현재 설정 가져오기
+      const currentSettings = await this.getSystemSettings();
+      
+      // 기본 설정이 없으면 새로 만들기
+      if (!currentSettings || Object.keys(currentSettings).length === 0) {
+        const defaultSettings: SystemSettings = {
+          defaultPaths: {
+            repoStorage: './repos'
+          },
+          refreshInterval: 5,
+          language: 'ko'
+        };
+        
+        await this.saveSystemSettings(defaultSettings);
+        this.systemSettings = defaultSettings;
+        logger.info('기본 시스템 설정이 DB에 생성되었습니다.');
+      } else {
+        this.systemSettings = currentSettings;
+      }
+      
+      // defaultPaths가 없으면 추가
+      if (!this.systemSettings.defaultPaths) {
+        this.systemSettings.defaultPaths = {
+          repoStorage: './repos'
+        };
+        await this.saveSystemSettings(this.systemSettings);
+      }
+      
+      // 저장소 경로 설정
+      this.basePath = this.systemSettings.defaultPaths?.repoStorage || './repos';
+      logger.info(`저장소 기본 경로: ${this.basePath}`);
+    } catch (error) {
+      logger.error('기본 설정 초기화 중 오류 발생:', error);
+      this.basePath = './repos'; // 오류 발생 시 기본값 사용
+    }
   }
   
   /**
@@ -43,6 +162,9 @@ export class SyncManager {
    */
   private async loadSettings(): Promise<void> {
     try {
+      // 시스템 설정 로드 및 초기화
+      await this.ensureDefaultSettings();
+      
       // GitHub 설정 로드
       const githubSettings = await this.settingsService.getGitHubSettings();
       
