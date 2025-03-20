@@ -6,9 +6,9 @@ import {
   fetchUserSettings, 
   updateUserSettingsApi, 
   fetchGitHubSettings, 
-  updateGitHubSettingsApi, 
+  updateGitHubSettings, 
   fetchJiraSettings, 
-  updateJiraSettingsApi 
+  updateJiraSettings, 
 } from '../api/settings-api';
 import { UserSettings, GitHubSettings, JiraSettings } from '../types/settings';
 
@@ -96,7 +96,7 @@ export function useGitHubSettings() {
     try {
       setLoading(true);
       setError(null);
-      const updatedSettings = await updateGitHubSettingsApi(newSettings);
+      const updatedSettings = await updateGitHubSettings(newSettings);
       setSettings(updatedSettings);
       return true;
     } catch (err) {
@@ -151,7 +151,7 @@ export function useJiraSettings() {
     try {
       setLoading(true);
       setError(null);
-      const updatedSettings = await updateJiraSettingsApi(newSettings);
+      const updatedSettings = await updateJiraSettings(newSettings);
       setSettings(updatedSettings);
       return true;
     } catch (err) {

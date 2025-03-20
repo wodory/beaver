@@ -75,12 +75,13 @@ export function useAccounts() {
         throw new Error('현재 설정이 로드되지 않았습니다.');
       }
       
-      // id가 없으면 영문 name을 기반으로 생성
-      const accountId = account.id || account.name.toLowerCase().replace(/[^a-z0-9]/g, '_');
+      // id가 없으면 username을 기반으로 생성
+      const accountId = account.id || account.username.toLowerCase().replace(/[^a-z0-9]/g, '_');
       
-      // 이미 존재하는 계정인지 확인
-      if (settings.accounts.some(a => a.id === accountId)) {
-        throw new Error(`ID '${accountId}'의 계정이 이미 존재합니다.`);
+      // 복합 유니크 키(id + type)로 유일성 검사
+      const isDuplicate = settings.accounts.some(a => a.id === accountId && a.type === account.type);
+      if (isDuplicate) {
+        throw new Error(`동일한 서비스(${account.type})에 ID '${accountId}'의 계정이 이미 존재합니다.`);
       }
       
       const newAccount: Account = {
@@ -98,15 +99,26 @@ export function useAccounts() {
   }, [settings, updateSettings]);
 
   // 계정 업데이트
-  const updateAccount = useCallback(async (accountId: string, accountData: Partial<Account>) => {
+  const updateAccount = useCallback(async (accountId: string, accountType: AccountType, accountData: Partial<Account>) => {
     try {
       if (!settings) {
         throw new Error('현재 설정이 로드되지 않았습니다.');
       }
       
-      const accountIndex = settings.accounts.findIndex(a => a.id === accountId);
+      // 복합 키(id + type)로 계정 찾기
+      const accountIndex = settings.accounts.findIndex(a => a.id === accountId && a.type === accountType);
       if (accountIndex === -1) {
-        throw new Error(`ID '${accountId}'의 계정을 찾을 수 없습니다.`);
+        throw new Error(`ID '${accountId}'와 타입 '${accountType}'에 해당하는 계정을 찾을 수 없습니다.`);
+      }
+      
+      // 타입을 변경하는 경우, 복합 유니크 키 검사
+      if (accountData.type && accountData.type !== accountType) {
+        const isDuplicate = settings.accounts.some(a => 
+          a.id === accountId && a.type === accountData.type && settings.accounts.indexOf(a) !== accountIndex
+        );
+        if (isDuplicate) {
+          throw new Error(`동일한 서비스(${accountData.type})에 ID '${accountId}'의 계정이 이미 존재합니다.`);
+        }
       }
       
       const updatedAccounts = [...settings.accounts];
@@ -124,19 +136,25 @@ export function useAccounts() {
   }, [settings, updateSettings]);
 
   // 계정 삭제
-  const deleteAccount = useCallback(async (accountId: string) => {
+  const deleteAccount = useCallback(async (accountId: string, accountType: AccountType) => {
     try {
       if (!settings) {
         throw new Error('현재 설정이 로드되지 않았습니다.');
       }
       
+      // 복합 키(id + type)로 계정 찾기
+      const account = settings.accounts.find(a => a.id === accountId && a.type === accountType);
+      if (!account) {
+        throw new Error(`ID '${accountId}'와 타입 '${accountType}'에 해당하는 계정을 찾을 수 없습니다.`);
+      }
+      
       // 연결된 저장소가 있는지 확인
-      const linkedRepositories = settings.repositories.filter(r => r.accountId === accountId);
+      const linkedRepositories = settings.repositories.filter(r => r.owner === accountId);
       if (linkedRepositories.length > 0) {
         throw new Error(`이 계정에 연결된 저장소(${linkedRepositories.length}개)가 있어 삭제할 수 없습니다.`);
       }
       
-      const updatedAccounts = settings.accounts.filter(a => a.id !== accountId);
+      const updatedAccounts = settings.accounts.filter(a => !(a.id === accountId && a.type === accountType));
       return await updateSettings({ accounts: updatedAccounts });
     } catch (err) {
       console.error('계정 삭제 오류:', err);
@@ -152,14 +170,24 @@ export function useAccounts() {
         throw new Error('현재 설정이 로드되지 않았습니다.');
       }
       
+      // 계정 존재 확인
+      const account = settings.accounts.find(a => a.id === repository.owner);
+      if (!account) {
+        throw new Error(`ID '${repository.owner}'의 계정을 찾을 수 없습니다.`);
+      }
+      
+      // settings.repositories가 undefined일 경우 빈 배열로 초기화
+      const repositories = settings.repositories || [];
+      
       // ID 자동 생성
-      const maxId = settings.repositories.reduce((max, repo) => Math.max(max, repo.id || 0), 0);
+      const maxId = repositories.reduce((max, repo) => Math.max(max, repo.id || 0), 0);
       const newRepository: Repository = {
         ...repository,
-        id: maxId + 1
+        id: maxId + 1,
+        ownerReference: `${repository.owner}@${account.type}` // owner@type 형식의 참조 생성
       };
       
-      const updatedRepositories = [...settings.repositories, newRepository];
+      const updatedRepositories = [...repositories, newRepository];
       return await updateSettings({ repositories: updatedRepositories });
     } catch (err) {
       console.error('저장소 추가 오류:', err);
@@ -201,7 +229,8 @@ export function useAccounts() {
         name: repoInfo.name!,
         fullName: repoInfo.fullName!,
         type: repoInfo.type as AccountType,
-        accountId
+        owner: accountId,
+        ownerReference: `${accountId}@${account.type}`
       };
       
       const updatedRepositories = [...settings.repositories, newRepository];
@@ -220,12 +249,15 @@ export function useAccounts() {
         throw new Error('현재 설정이 로드되지 않았습니다.');
       }
       
-      const repoIndex = settings.repositories.findIndex(r => r.id === repoId);
+      // settings.repositories가 undefined일 경우 빈 배열로 초기화
+      const repositories = settings.repositories || [];
+      
+      const repoIndex = repositories.findIndex(r => r.id === repoId);
       if (repoIndex === -1) {
         throw new Error(`ID '${repoId}'의 저장소를 찾을 수 없습니다.`);
       }
       
-      const updatedRepositories = [...settings.repositories];
+      const updatedRepositories = [...repositories];
       updatedRepositories[repoIndex] = {
         ...updatedRepositories[repoIndex],
         ...repoData
@@ -246,7 +278,10 @@ export function useAccounts() {
         throw new Error('현재 설정이 로드되지 않았습니다.');
       }
       
-      const updatedRepositories = settings.repositories.filter(r => r.id !== repoId);
+      // settings.repositories가 undefined일 경우 빈 배열로 초기화
+      const repositories = settings.repositories || [];
+      
+      const updatedRepositories = repositories.filter(r => r.id !== repoId);
       return await updateSettings({ repositories: updatedRepositories });
     } catch (err) {
       console.error('저장소 삭제 오류:', err);
@@ -264,7 +299,7 @@ export function useAccounts() {
   // 특정 계정에 연결된 저장소 목록 가져오기
   const getRepositoriesByAccount = useCallback((accountId: string) => {
     if (!settings) return [];
-    return settings.repositories.filter(repo => repo.accountId === accountId);
+    return settings.repositories.filter(repo => repo.owner === accountId);
   }, [settings]);
 
   // 컴포넌트 마운트 시 설정 불러오기

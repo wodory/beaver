@@ -23,14 +23,15 @@ export type AccountType = 'github' | 'github_enterprise' | 'jira' | 'gitlab';
  */
 export interface Account {
   id: string;           // 계정 식별자 (고유 ID, 영문으로만 구성)
-  name: string;         // 표시 이름 (한글, 영문 등 자유롭게 설정 가능)
+  username: string;     // 사용자 이름 (한글, 영문 등 자유롭게 설정 가능)
   type: AccountType;    // 계정 유형
   url: string;          // 서비스 URL (예: https://github.com)
   apiUrl: string;       // API URL (예: https://api.github.com)
   token: string;        // 인증 토큰
-  email?: string;       // 이메일 (Jira 등에서 사용)
-  company?: string;     // 회사/조직 정보
-  additionalInfo?: Record<string, any>; // 추가 정보 (서비스별 특수 설정)
+  email: string;        // 이메일 (필수)
+  company: string;      // 회사 정보
+  org?: string;         // 조직 정보
+  additionalInfo?: Record<string, any>; // 추가 정보 (서비스별 특수 설정, SSO 연동 등)
 }
 
 /**
@@ -42,7 +43,8 @@ export interface Repository {
   name: string;         // 저장소 이름
   fullName: string;     // 전체 경로 (소유자/저장소)
   type: AccountType;    // 저장소 유형 (github, github_enterprise 등)
-  accountId: string;    // 연결된 계정 ID
+  owner: string;        // 저장소 소유자 (계정 ID)
+  ownerReference?: string; // 소유자 참조 (owner@type 형식)
 }
 
 /**

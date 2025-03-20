@@ -47,12 +47,18 @@ export function AccountsTab() {
       if (currentAccount) {
         // 계정 업데이트
         // 타입 변환 처리
-        success = await updateAccount(currentAccount.id, {
-          ...accountData,
-          type: accountData.type as AccountType
-        });
+        success = await updateAccount(
+          currentAccount.id, 
+          currentAccount.type as AccountType,
+          {
+            ...accountData,
+            type: accountData.type as AccountType
+          }
+        );
         if (success) {
           toast.success("계정이 업데이트되었습니다.");
+          // 설정 다시 로드하여 UI 갱신
+          await loadSettings();
         }
       } else {
         // 새 계정 추가
@@ -63,6 +69,8 @@ export function AccountsTab() {
         });
         if (success) {
           toast.success("새 계정이 추가되었습니다.");
+          // 설정 다시 로드하여 UI 갱신
+          await loadSettings();
         }
       }
       
@@ -77,11 +85,13 @@ export function AccountsTab() {
 
   // 계정 삭제 핸들러
   const handleDeleteAccount = async (account: Account) => {
-    if (confirm(`계정 "${account.name}"을(를) 삭제하시겠습니까?`)) {
+    if (confirm(`계정 "${account.username}"을(를) 삭제하시겠습니까?`)) {
       try {
-        const success = await deleteAccount(account.id);
+        const success = await deleteAccount(account.id, account.type);
         if (success) {
           toast.success("계정이 삭제되었습니다.");
+          // 설정 다시 로드하여 UI 갱신
+          await loadSettings();
         } else {
           toast.error("계정 삭제에 실패했습니다.");
         }
@@ -107,6 +117,8 @@ export function AccountsTab() {
         });
         if (success) {
           toast.success("저장소가 업데이트되었습니다.");
+          // 설정 다시 로드하여 UI 갱신
+          await loadSettings();
         }
       } else {
         // 새 저장소 추가
@@ -117,6 +129,8 @@ export function AccountsTab() {
         });
         if (success) {
           toast.success("새 저장소가 추가되었습니다.");
+          // 설정 다시 로드하여 UI 갱신
+          await loadSettings();
         }
       }
       
@@ -136,6 +150,8 @@ export function AccountsTab() {
         const success = await deleteRepository(repository.id);
         if (success) {
           toast.success("저장소가 삭제되었습니다.");
+          // 설정 다시 로드하여 UI 갱신
+          await loadSettings();
         } else {
           toast.error("저장소 삭제에 실패했습니다.");
         }
@@ -156,12 +172,20 @@ export function AccountsTab() {
       .map(account => account.id);
     
     // 해당 계정에 연결된 저장소만 필터링
-    return settings.repositories.filter(repo => accountIds.includes(repo.accountId));
+    return settings.repositories.filter(repo => 
+      accountIds.includes(repo.owner) && repo.type === type
+    );
   };
 
-  // 계정 ID로 계정 정보 가져오기
-  const getAccountById = (accountId: string) => {
-    return settings?.accounts.find(account => account.id === accountId);
+  // 계정 ID와 타입으로 계정 정보 가져오기
+  const getAccountById = (accountId: string, accountType?: AccountType) => {
+    if (accountType) {
+      // ID와 타입으로 복합 키 검색
+      return settings?.accounts.find(account => account.id === accountId && account.type === accountType);
+    } else {
+      // 하위 호환성을 위해 ID만으로도 검색 가능하게 유지
+      return settings?.accounts.find(account => account.id === accountId);
+    }
   };
 
   // GitHub 설정에서 계정 및 저장소 로드
@@ -247,7 +271,7 @@ export function AccountsTab() {
                     <div key={account.id} className="border rounded-md p-4">
                       <div className="flex justify-between items-start">
                         <div>
-                          <h3 className="font-medium text-lg">{account.name}</h3>
+                          <h3 className="font-medium text-lg">{account.username}</h3>
                           <p className="text-sm text-muted-foreground">ID: {account.id}</p>
                         </div>
                         <div className="flex gap-2">
@@ -273,11 +297,10 @@ export function AccountsTab() {
                       <div className="grid grid-cols-2 gap-2 mt-2 text-sm">
                         <div><span className="font-medium">URL:</span> {account.url}</div>
                         <div><span className="font-medium">API URL:</span> {account.apiUrl}</div>
-                        {account.company && (
-                          <div><span className="font-medium">회사/조직:</span> {account.company}</div>
-                        )}
-                        {account.email && (
-                          <div><span className="font-medium">이메일:</span> {account.email}</div>
+                        <div><span className="font-medium">이메일:</span> {account.email}</div>
+                        <div><span className="font-medium">회사:</span> {account.company}</div>
+                        {account.org && (
+                          <div><span className="font-medium">조직:</span> {account.org}</div>
                         )}
                       </div>
                     </div>
@@ -286,6 +309,19 @@ export function AccountsTab() {
               ) : (
                 <div className="text-center py-6 text-muted-foreground">
                   등록된 {getAccountTypeName(activeTab)} 계정이 없습니다.
+                  {activeTab === 'github_enterprise' && (
+                    <div className="mt-4">
+                      <Button 
+                        onClick={() => {
+                          setCurrentAccount(undefined);
+                          setShowAccountDialog(true);
+                        }}
+                      >
+                        <Plus className="h-4 w-4 mr-2" />
+                        {getAccountTypeName(activeTab)} 계정 추가
+                      </Button>
+                    </div>
+                  )}
                 </div>
               )}
             </CardContent>
@@ -315,7 +351,7 @@ export function AccountsTab() {
               {filteredRepositories.length > 0 ? (
                 <div className="space-y-4">
                   {filteredRepositories.map(repository => {
-                    const account = getAccountById(repository.accountId);
+                    const account = getAccountById(repository.owner, repository.type);
                     return (
                       <div key={repository.id} className="border rounded-md p-4">
                         <div className="flex justify-between items-start">
@@ -327,7 +363,7 @@ export function AccountsTab() {
                               </p>
                               {account && (
                                 <Badge variant="outline" className="text-xs">
-                                  {account.name}
+                                  {account.username}
                                 </Badge>
                               )}
                             </div>
@@ -364,6 +400,19 @@ export function AccountsTab() {
                   {filteredAccounts.length === 0 
                     ? `먼저 ${getAccountTypeName(activeTab)} 계정을 추가하세요.` 
                     : `등록된 ${getAccountTypeName(activeTab)} 저장소가 없습니다.`}
+                  {activeTab === 'github_enterprise' && filteredAccounts.length === 0 && (
+                    <div className="mt-4">
+                      <Button 
+                        onClick={() => {
+                          setCurrentAccount(undefined);
+                          setShowAccountDialog(true);
+                        }}
+                      >
+                        <Plus className="h-4 w-4 mr-2" />
+                        {getAccountTypeName(activeTab)} 계정 추가
+                      </Button>
+                    </div>
+                  )}
                 </div>
               )}
             </CardContent>
@@ -390,7 +439,7 @@ export function AccountsTab() {
           id: currentRepository.id.toString()
         } : undefined}
         isEdit={!!currentRepository}
-        accounts={settings.accounts}
+        accounts={settings.accounts.filter(account => account.type === activeTab)}
       />
     </div>
   );

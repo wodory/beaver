@@ -26,7 +26,8 @@ export interface RepositoryFormData {
   name: string;
   fullName: string;
   type: string;
-  accountId: string;
+  owner: string;
+  ownerReference?: string;
 }
 
 interface RepositoryDialogProps {
@@ -52,7 +53,7 @@ export function RepositoryDialog({
     name: "",
     fullName: "",
     type: "github",
-    accountId: ""
+    owner: ""
   });
 
   // URL 파싱 상태
@@ -61,7 +62,7 @@ export function RepositoryDialog({
   const [parseError, setParseError] = useState("");
 
   // 계정 선택 시 계정 타입 설정
-  const selectedAccount = accounts.find(account => account.id === formData.accountId);
+  const selectedAccount = accounts.find(account => account.id === formData.owner);
   
   // 초기 데이터가 있을 경우 폼 데이터 초기화
   useEffect(() => {
@@ -71,25 +72,33 @@ export function RepositoryDialog({
       });
       setUrlParsed(true);
     } else {
-      // 초기화
+      // 계정 타입별로 필터링
+      const filteredAccounts = accounts.filter(account => account.type === "github");
+      
+      // 해당 타입의 계정이 있으면 사용, 없으면 전체 계정 중 첫 번째 사용
+      const defaultAccount = filteredAccounts.length > 0 ? filteredAccounts[0] : 
+                           (accounts.length > 0 ? accounts[0] : null);
+      
       setFormData({
         url: "",
         name: "",
         fullName: "",
-        type: selectedAccount?.type || "github",
-        accountId: accounts.length > 0 ? accounts[0].id || "" : ""
+        type: defaultAccount?.type || "github",
+        owner: defaultAccount?.id || "",
+        ownerReference: defaultAccount ? `${defaultAccount.id}@${defaultAccount.type}` : ""
       });
       setUrlParsed(false);
     }
     setParseError("");
-  }, [initialData, open, accounts, selectedAccount]);
+  }, [initialData, open, accounts]);
 
   // 계정 변경 시 타입 업데이트
   useEffect(() => {
     if (selectedAccount) {
       setFormData(prev => ({
         ...prev,
-        type: selectedAccount.type
+        type: selectedAccount.type,
+        ownerReference: `${selectedAccount.id}@${selectedAccount.type}`
       }));
     }
   }, [selectedAccount]);
@@ -119,12 +128,21 @@ export function RepositoryDialog({
       setParsing(true);
       setParseError("");
       
+      // 선택된 계정 가져오기
+      const selectedAccount = accounts.find(account => account.id === formData.owner);
+      
+      if (!selectedAccount) {
+        setParseError("계정을 먼저 선택해주세요.");
+        toast.error("계정을 먼저 선택해주세요.");
+        return;
+      }
+      
       // URL에서 정보 추출
       const url = new URL(formData.url);
       const pathParts = url.pathname.split('/').filter(Boolean);
       
       // GitHub 또는 GitHub Enterprise 형식 파싱
-      if (formData.type === "github" || formData.type === "github_enterprise") {
+      if (selectedAccount.type === "github" || selectedAccount.type === "github_enterprise") {
         if (pathParts.length >= 2) {
           const owner = pathParts[0];
           const repo = pathParts[1].replace('.git', '');
@@ -132,18 +150,19 @@ export function RepositoryDialog({
           setFormData(prev => ({
             ...prev,
             name: repo,
-            fullName: `${owner}/${repo}`
+            fullName: `${owner}/${repo}`,
+            type: selectedAccount.type
           }));
           
           setUrlParsed(true);
           toast.success("저장소 정보 파싱 완료");
         } else {
-          setParseError("유효한 GitHub 저장소 URL이 아닙니다.");
-          toast.error("유효한 GitHub 저장소 URL이 아닙니다.");
+          setParseError("유효한 GitHub 저장소 URL이 아닙니다. (형식: https://domain/owner/repo)");
+          toast.error("유효한 GitHub 저장소 URL이 아닙니다. (형식: https://domain/owner/repo)");
         }
       }
       // GitLab 형식 파싱 
-      else if (formData.type === "gitlab" || formData.type === "gitlab_self_hosted") {
+      else if (selectedAccount.type === "gitlab" || selectedAccount.type === "gitlab_self_hosted") {
         if (pathParts.length >= 2) {
           const fullPath = pathParts.join('/').replace('.git', '');
           const repoName = pathParts[pathParts.length - 1].replace('.git', '');
@@ -151,7 +170,8 @@ export function RepositoryDialog({
           setFormData(prev => ({
             ...prev,
             name: repoName,
-            fullName: fullPath
+            fullName: fullPath,
+            type: selectedAccount.type
           }));
           
           setUrlParsed(true);
@@ -162,13 +182,14 @@ export function RepositoryDialog({
         }
       }
       // Jira 형식에 대한 처리 - 예시
-      else if (formData.type === "jira") {
+      else if (selectedAccount.type === "jira") {
         const projectKey = pathParts[pathParts.length - 1];
         
         setFormData(prev => ({
           ...prev,
           name: projectKey,
-          fullName: projectKey
+          fullName: projectKey,
+          type: selectedAccount.type
         }));
         
         setUrlParsed(true);
@@ -190,7 +211,7 @@ export function RepositoryDialog({
   // 저장 핸들러
   const handleSave = () => {
     // 필수 필드 검증
-    if (!formData.accountId) {
+    if (!formData.owner) {
       toast.error("계정을 선택해주세요.");
       return;
     }
@@ -205,8 +226,14 @@ export function RepositoryDialog({
       if (!confirm) return;
     }
 
+    // 최종 데이터 생성 - ownerReference는 현재 폼의 owner와 type을 기반으로 생성
+    const finalFormData = {
+      ...formData,
+      ownerReference: `${formData.owner}@${formData.type}`
+    };
+
     // 부모 컴포넌트로 저장 이벤트 전달
-    onSave(formData);
+    onSave(finalFormData);
     onOpenChange(false);
   };
 
@@ -223,8 +250,8 @@ export function RepositoryDialog({
           <div className="space-y-2">
             <Label htmlFor="accountSelect">계정</Label>
             <Select 
-              value={formData.accountId} 
-              onValueChange={(value: string) => handleChange("accountId", value)}
+              value={formData.owner} 
+              onValueChange={(value: string) => handleChange("owner", value)}
               disabled={isEdit}
             >
               <SelectTrigger id="accountSelect">
@@ -232,8 +259,11 @@ export function RepositoryDialog({
               </SelectTrigger>
               <SelectContent>
                 {accounts.map(account => (
-                  <SelectItem key={account.id} value={account.id || ""}>
-                    {account.name} ({account.type})
+                  <SelectItem 
+                    key={`${account.id}-${account.type}`} 
+                    value={account.id || ""}
+                  >
+                    {account.username} ({account.type})
                   </SelectItem>
                 ))}
               </SelectContent>
@@ -252,24 +282,22 @@ export function RepositoryDialog({
                 id="repositoryUrl" 
                 value={formData.url} 
                 onChange={(e: React.ChangeEvent<HTMLInputElement>) => handleChange("url", e.target.value)}
+                onBlur={() => formData.url && !parsing && !isEdit && handleParseUrl()}
+                onKeyDown={(e) => e.key === 'Enter' && formData.url && !parsing && !isEdit && handleParseUrl()}
                 placeholder="https://github.com/username/repo"
                 className="flex-1"
                 disabled={isEdit}
               />
-              <Button 
-                variant="outline" 
-                onClick={handleParseUrl} 
-                disabled={!formData.url || parsing || (isEdit && urlParsed)}
-              >
-                {parsing ? "파싱 중..." : "파싱"}
-              </Button>
             </div>
+            {parsing && (
+              <p className="text-xs text-muted-foreground">파싱 중...</p>
+            )}
             {parseError && (
               <p className="text-xs text-red-500">{parseError}</p>
             )}
             {!isEdit && (
               <p className="text-xs text-muted-foreground">
-                저장소 URL을 입력하고 파싱 버튼을 눌러 정보를 자동으로 가져옵니다.
+                저장소 URL을 입력하면 자동으로 정보를 파싱합니다.
               </p>
             )}
           </div>
@@ -294,19 +322,6 @@ export function RepositoryDialog({
               placeholder="소유자명/저장소명"
               readOnly={!isEdit && !urlParsed}
             />
-          </div>
-          
-          <div className="space-y-2">
-            <Label htmlFor="repoType">저장소 유형</Label>
-            <Input 
-              id="repoType" 
-              value={formData.type} 
-              readOnly
-              disabled
-            />
-            <p className="text-xs text-muted-foreground">
-              선택한 계정 유형에 따라 자동으로 설정됩니다.
-            </p>
           </div>
         </div>
         
