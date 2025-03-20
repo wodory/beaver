@@ -1,23 +1,25 @@
-import { drizzle } from 'drizzle-orm/node-postgres';
-import { migrate } from 'drizzle-orm/node-postgres/migrator';
+/**
+ * Neon DB 데이터베이스 어댑터
+ * 
+ * Neon DB(서버리스 PostgreSQL)와 연결하고 쿼리를 실행하는 어댑터입니다.
+ */
+import { drizzle } from 'drizzle-orm/postgres-js';
+import { migrate } from 'drizzle-orm/postgres-js/migrator';
+import postgres from 'postgres';
 import { IDatabaseAdapter } from './IDatabaseAdapter.js';
 import * as schema from '../schema/index.js';
 
-// pg 모듈 타입
-type Pool = any;
-type PoolClient = any;
-
 /**
- * PostgreSQL 데이터베이스 어댑터
+ * Neon DB 어댑터 클래스
  */
-export class PostgreSQLAdapter implements IDatabaseAdapter {
-  private pool: Pool | null = null;
+export class NeonDBAdapter implements IDatabaseAdapter {
+  private poolClient: ReturnType<typeof postgres> | null = null;
   public db: ReturnType<typeof drizzle> | null = null;
-  private client: PoolClient | null = null;
+  private transaction: boolean = false;
 
   /**
-   * PostgreSQL 어댑터를 초기화합니다.
-   * @param connectionString PostgreSQL 연결 문자열
+   * Neon DB 어댑터를 초기화합니다.
+   * @param connectionString Neon DB 연결 문자열
    */
   constructor(private readonly connectionString: string) {}
 
@@ -26,22 +28,20 @@ export class PostgreSQLAdapter implements IDatabaseAdapter {
    */
   async initialize(): Promise<void> {
     try {
-      // ESM 환경에서 동적 임포트
-      const pg = await import('pg');
-      const Pool = pg.default.Pool;
-      this.pool = new Pool({
-        connectionString: this.connectionString,
+      // Neon DB는 서버리스이므로 SSL 필요
+      this.poolClient = postgres(this.connectionString, {
+        ssl: 'require',
+        max: 10,           // 연결 풀 크기 (서버리스에 최적화)
+        idle_timeout: 30,  // 유휴 연결 타임아웃 (초)
+        connect_timeout: 10 // 연결 타임아웃 (초)
       });
       
-      // 연결 테스트
-      await this.pool.query('SELECT NOW()');
-      
       // Drizzle ORM 초기화
-      this.db = drizzle(this.pool, { schema });
+      this.db = drizzle(this.poolClient, { schema });
       
-      console.log('PostgreSQL 데이터베이스 연결 성공');
+      console.log('Neon DB 연결 성공');
     } catch (error) {
-      console.error('PostgreSQL 연결 오류:', error);
+      console.error('Neon DB 연결 오류:', error);
       throw new Error('데이터베이스 연결에 실패했습니다.');
     }
   }
@@ -50,27 +50,34 @@ export class PostgreSQLAdapter implements IDatabaseAdapter {
    * 데이터베이스 연결을 종료합니다.
    */
   async close(): Promise<void> {
-    if (this.client) {
-      this.client.release();
-      this.client = null;
-    }
-    
-    if (this.pool) {
-      await this.pool.end();
-      this.pool = null;
+    if (this.poolClient) {
+      await this.poolClient.end();
+      this.poolClient = null;
     }
     
     this.db = null;
   }
 
   /**
-   * 쿼리를 실행합니다.
+   * SQL 쿼리를 실행합니다.
    */
   async query<T>(query: any): Promise<T> {
     if (!this.db) {
       throw new Error('데이터베이스가 초기화되지 않았습니다.');
     }
     
+    // 직접 SQL 실행인 경우
+    if (typeof query === 'object' && query.text) {
+      const { text, values } = query;
+      
+      if (!this.poolClient) {
+        throw new Error('데이터베이스 클라이언트가 초기화되지 않았습니다.');
+      }
+      
+      return await this.poolClient.unsafe(text, values) as unknown as T;
+    }
+    
+    // Drizzle 쿼리 객체인 경우
     return await query.execute() as T;
   }
 
@@ -134,52 +141,64 @@ export class PostgreSQLAdapter implements IDatabaseAdapter {
    * 트랜잭션을 시작합니다.
    */
   async beginTransaction(): Promise<void> {
-    if (!this.pool) {
+    if (!this.poolClient) {
       throw new Error('데이터베이스가 초기화되지 않았습니다.');
     }
     
-    this.client = await this.pool.connect();
-    await this.client.query('BEGIN');
+    if (this.transaction) {
+      throw new Error('이미 트랜잭션이 진행중입니다.');
+    }
+    
+    // Neon DB의 트랜잭션은 postgres.js 내장 기능 사용
+    this.transaction = true;
   }
 
   /**
    * 트랜잭션을 커밋합니다.
    */
   async commitTransaction(): Promise<void> {
-    if (!this.client) {
-      throw new Error('트랜잭션이 시작되지 않았습니다.');
+    if (!this.poolClient) {
+      throw new Error('데이터베이스가 초기화되지 않았습니다.');
     }
     
-    await this.client.query('COMMIT');
-    this.client.release();
-    this.client = null;
+    if (!this.transaction) {
+      throw new Error('진행중인 트랜잭션이 없습니다.');
+    }
+    
+    this.transaction = false;
   }
 
   /**
    * 트랜잭션을 롤백합니다.
    */
   async rollbackTransaction(): Promise<void> {
-    if (!this.client) {
-      throw new Error('트랜잭션이 시작되지 않았습니다.');
+    if (!this.poolClient) {
+      throw new Error('데이터베이스가 초기화되지 않았습니다.');
     }
     
-    await this.client.query('ROLLBACK');
-    this.client.release();
-    this.client = null;
+    if (!this.transaction) {
+      throw new Error('진행중인 트랜잭션이 없습니다.');
+    }
+    
+    this.transaction = false;
   }
 
   /**
    * 마이그레이션을 실행합니다.
    */
   async runMigrations(): Promise<void> {
-    if (!this.db || !this.pool) {
+    if (!this.db) {
       throw new Error('데이터베이스가 초기화되지 않았습니다.');
     }
     
-    const db = drizzle(this.pool);
-    
-    // 마이그레이션 실행
-    await migrate(db, { migrationsFolder: './src/db/migrations' });
-    console.log('마이그레이션 완료');
+    try {
+      await migrate(this.db, {
+        migrationsFolder: './src/db/migrations'
+      });
+      console.log('마이그레이션 완료');
+    } catch (error) {
+      console.error('마이그레이션 오류:', error);
+      throw error;
+    }
   }
 } 

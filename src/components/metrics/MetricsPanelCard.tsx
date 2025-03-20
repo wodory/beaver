@@ -277,7 +277,7 @@ const generateMetricsData = (dateRange = 14, seed = 1): MetricItem[] => {
 // 샘플 데이터 초기화
 const initialMetrics = generateMetricsData();
 
-interface ExampleMetricsProps {
+interface MetricsPanelCardProps {
   filterState?: {
     project: string;
     startDate: Date | null;
@@ -286,7 +286,7 @@ interface ExampleMetricsProps {
   };
 }
 
-export function ExampleMetrics({ filterState }: ExampleMetricsProps) {
+export function MetricsPanelCard({ filterState }: MetricsPanelCardProps) {
   const [activeMetricIndex, setActiveMetricIndex] = useState(0);
   
   // filterState가 변경될 때마다 리렌더링되는 메트릭 데이터 계산
@@ -301,7 +301,7 @@ export function ExampleMetrics({ filterState }: ExampleMetricsProps) {
   
   // filterState가 변경될 때마다 새로운 함수 생성
   const getSubtitle = useCallback(() => {
-    console.log('ExampleMetrics - subtitle function called with filterState:', filterState);
+    console.log('MetricsPanelCard - subtitle function called with filterState:', filterState);
     
     if (!filterState) {
       return "최근 30일간의 주요 DevOps 메트릭스 데이터";

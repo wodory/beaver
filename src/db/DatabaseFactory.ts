@@ -1,13 +1,15 @@
-import { IDatabaseAdapter } from './adapters/IDatabaseAdapter';
-import { PostgreSQLAdapter } from './adapters/PostgreSQLAdapter';
-import { SQLiteAdapter } from './adapters/SQLiteAdapter';
+import { IDatabaseAdapter } from './adapters/IDatabaseAdapter.js';
+import { PostgreSQLAdapter } from './adapters/PostgreSQLAdapter.js';
+import { SQLiteAdapter } from './adapters/SQLiteAdapter.js';
+import { NeonDBAdapter } from './adapters/NeonDBAdapter.js';
 
 /**
  * 데이터베이스 유형 열거형
  */
 export enum DatabaseType {
   POSTGRESQL = 'postgresql',
-  SQLITE = 'sqlite'
+  SQLITE = 'sqlite',
+  NEON = 'neon'
 }
 
 /**
@@ -30,6 +32,8 @@ export class DatabaseFactory {
         return new PostgreSQLAdapter(connectionString);
       case DatabaseType.SQLITE:
         return new SQLiteAdapter(connectionString);
+      case DatabaseType.NEON:
+        return new NeonDBAdapter(connectionString);
       default:
         throw new Error(`지원하지 않는 데이터베이스 유형: ${type}`);
     }

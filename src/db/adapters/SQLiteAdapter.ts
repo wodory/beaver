@@ -1,15 +1,16 @@
 import { drizzle } from 'drizzle-orm/better-sqlite3';
 import { migrate } from 'drizzle-orm/better-sqlite3/migrator';
 import { eq } from 'drizzle-orm';
+import type { Database as SQLiteDatabase } from 'better-sqlite3';
 import Database from 'better-sqlite3';
-import { IDatabaseAdapter } from './IDatabaseAdapter';
-import * as schema from '../schema-sqlite';
+import { IDatabaseAdapter } from './IDatabaseAdapter.js';
+import * as schema from '../schema-sqlite/index.js';
 
 /**
  * SQLite 데이터베이스 어댑터
  */
 export class SQLiteAdapter implements IDatabaseAdapter {
-  private sqlite: Database | null = null;
+  private sqlite: SQLiteDatabase | null = null;
   public db: ReturnType<typeof drizzle> | null = null;
   private transaction: boolean = false;
 
@@ -56,7 +57,7 @@ export class SQLiteAdapter implements IDatabaseAdapter {
   }
 
   /**
-   * 쿼리를 실행합니다. (데이터 반환)
+   * SQL 쿼리를 실행합니다.
    */
   async query<T>(sql: string, params: any[] = []): Promise<T> {
     if (!this.sqlite) {
@@ -64,10 +65,14 @@ export class SQLiteAdapter implements IDatabaseAdapter {
     }
     
     try {
-      // BetterSQLite3 사용
       const stmt = this.sqlite.prepare(sql);
-      const result = stmt.all(...params);
-      return result as T;
+      
+      // 단일 행 반환인지 여러 행 반환인지 확인
+      if (sql.trim().toLowerCase().startsWith('select')) {
+        return stmt.all(...params) as unknown as T;
+      } else {
+        return stmt.run(...params) as unknown as T;
+      }
     } catch (error) {
       console.error('SQL 쿼리 실행 오류:', error);
       throw error;
@@ -75,7 +80,7 @@ export class SQLiteAdapter implements IDatabaseAdapter {
   }
 
   /**
-   * 쿼리를 실행합니다. (데이터 반환 없음)
+   * SQL 명령을 실행합니다.
    */
   async execute(sql: string, params: any[] = []): Promise<void> {
     if (!this.sqlite) {
@@ -83,7 +88,6 @@ export class SQLiteAdapter implements IDatabaseAdapter {
     }
     
     try {
-      // BetterSQLite3 사용
       const stmt = this.sqlite.prepare(sql);
       stmt.run(...params);
     } catch (error) {
@@ -95,12 +99,12 @@ export class SQLiteAdapter implements IDatabaseAdapter {
   /**
    * 데이터를 삽입합니다.
    */
-  async insert<T extends Record<string, any>, R>(table: any, data: T): Promise<R> {
+  async insert<T, R>(table: any, data: T): Promise<R> {
     if (!this.db) {
       throw new Error('데이터베이스가 초기화되지 않았습니다.');
     }
     
-    return await Promise.resolve(this.db.insert(table).values(data).returning().get()) as R;
+    return await Promise.resolve(this.db.insert(table).values(data as Record<string, any>).returning().get()) as R;
   }
 
   /**
@@ -122,19 +126,17 @@ export class SQLiteAdapter implements IDatabaseAdapter {
       throw new Error('데이터베이스가 초기화되지 않았습니다.');
     }
     
-    const updateQuery = this.db.update(table).set(data);
+    let updateQuery = this.db.update(table).set(data as Record<string, any>);
+    
     if (where) {
-      // where 조건이 객체인 경우 eq로 변환
-      if (typeof where === 'object' && !Array.isArray(where)) {
-        const conditions = Object.entries(where).map(([key, value]) => {
-          return eq(table[key as keyof typeof table], value);
-        });
-        
-        // where 사용 - 단일 조건 적용
-        return await Promise.resolve(updateQuery.where(where).returning().get()) as R;
-      } else {
-        // where가 이미 drizzle 조건인 경우
-        return await Promise.resolve(updateQuery.where(where).returning().get()) as R;
+      if (typeof where === 'function') {
+        // 함수형 where 조건 (Drizzle 쿼리 빌더)
+        updateQuery = updateQuery.where(where);
+      } else if (typeof where === 'object') {
+        // 객체형 where 조건 (ID 기반)
+        for (const key in where) {
+          updateQuery = updateQuery.where(eq(table[key], where[key]));
+        }
       }
     }
     
@@ -149,19 +151,17 @@ export class SQLiteAdapter implements IDatabaseAdapter {
       throw new Error('데이터베이스가 초기화되지 않았습니다.');
     }
     
-    const deleteQuery = this.db.delete(table);
+    let deleteQuery = this.db.delete(table);
+    
     if (where) {
-      // where 조건이 객체인 경우 eq로 변환
-      if (typeof where === 'object' && !Array.isArray(where)) {
-        const conditions = Object.entries(where).map(([key, value]) => {
-          return eq(table[key as keyof typeof table], value);
-        });
-        
-        // where 사용 - 단일 조건 적용
-        return await Promise.resolve(deleteQuery.where(where).returning().get()) as R;
-      } else {
-        // where가 이미 drizzle 조건인 경우
-        return await Promise.resolve(deleteQuery.where(where).returning().get()) as R;
+      if (typeof where === 'function') {
+        // 함수형 where 조건 (Drizzle 쿼리 빌더)
+        deleteQuery = deleteQuery.where(where);
+      } else if (typeof where === 'object') {
+        // 객체형 where 조건 (ID 기반)
+        for (const key in where) {
+          deleteQuery = deleteQuery.where(eq(table[key], where[key]));
+        }
       }
     }
     
@@ -176,7 +176,11 @@ export class SQLiteAdapter implements IDatabaseAdapter {
       throw new Error('데이터베이스가 초기화되지 않았습니다.');
     }
     
-    this.sqlite.exec('BEGIN TRANSACTION');
+    if (this.transaction) {
+      throw new Error('이미 트랜잭션이 진행중입니다.');
+    }
+    
+    this.sqlite.exec('BEGIN TRANSACTION;');
     this.transaction = true;
   }
 
@@ -189,11 +193,14 @@ export class SQLiteAdapter implements IDatabaseAdapter {
     }
     
     if (!this.transaction) {
-      throw new Error('트랜잭션이 시작되지 않았습니다.');
+      throw new Error('진행중인 트랜잭션이 없습니다.');
     }
     
-    this.sqlite.exec('COMMIT');
-    this.transaction = false;
+    try {
+      this.sqlite.exec('COMMIT;');
+    } finally {
+      this.transaction = false;
+    }
   }
 
   /**
@@ -205,46 +212,31 @@ export class SQLiteAdapter implements IDatabaseAdapter {
     }
     
     if (!this.transaction) {
-      throw new Error('트랜잭션이 시작되지 않았습니다.');
+      throw new Error('진행중인 트랜잭션이 없습니다.');
     }
     
-    this.sqlite.exec('ROLLBACK');
-    this.transaction = false;
+    try {
+      this.sqlite.exec('ROLLBACK;');
+    } finally {
+      this.transaction = false;
+    }
   }
 
   /**
    * 마이그레이션을 실행합니다.
    */
   async runMigrations(): Promise<void> {
+    if (!this.db || !this.sqlite) {
+      throw new Error('데이터베이스가 초기화되지 않았습니다.');
+    }
+    
     try {
-      if (!this.db) {
-        throw new Error('데이터베이스가 초기화되지 않았습니다.');
-      }
-      
-      // HACK: 기존 파일 기반 마이그레이션 대신 스키마 정의를 직접 사용하여 테이블 생성
-      const statements = [
-        "CREATE TABLE IF NOT EXISTS repositories (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, full_name TEXT NOT NULL UNIQUE, clone_url TEXT NOT NULL, local_path TEXT, type TEXT NOT NULL DEFAULT 'github', api_url TEXT, api_token TEXT, last_sync_at TEXT DEFAULT CURRENT_TIMESTAMP, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP);",
-        "CREATE TABLE IF NOT EXISTS users (id INTEGER PRIMARY KEY AUTOINCREMENT, login TEXT NOT NULL, name TEXT, email TEXT, avatar_url TEXT, github_id INTEGER UNIQUE, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP);",
-        "CREATE TABLE IF NOT EXISTS commits (id TEXT PRIMARY KEY, repository_id INTEGER NOT NULL, author_id INTEGER, committer_id INTEGER, message TEXT, committed_at TEXT NOT NULL, additions INTEGER, deletions INTEGER, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP);",
-        "CREATE TABLE IF NOT EXISTS pull_requests (id INTEGER PRIMARY KEY AUTOINCREMENT, number INTEGER NOT NULL, repository_id INTEGER NOT NULL, title TEXT NOT NULL, state TEXT NOT NULL, author_id INTEGER, created_at TEXT NOT NULL, updated_at TEXT NOT NULL, closed_at TEXT, merged_at TEXT, additions INTEGER, deletions INTEGER, changed_files INTEGER, record_created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, record_updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP);",
-        "CREATE TABLE IF NOT EXISTS reviews (id TEXT PRIMARY KEY, pull_request_id INTEGER NOT NULL, state TEXT NOT NULL, author_id INTEGER, submitted_at TEXT NOT NULL, body TEXT, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP);"
-      ];
-      
-      // 트랜잭션 내에서 모든 테이블 생성
-      this.sqlite?.exec('BEGIN TRANSACTION;');
-      
-      for (const statement of statements) {
-        this.sqlite?.exec(statement);
-      }
-      
-      this.sqlite?.exec('COMMIT;');
-      
-      console.log('마이그레이션 완료');
+      await migrate(this.db, {
+        migrationsFolder: './src/db/migrations-sqlite'
+      });
+      console.log('SQLite 마이그레이션 완료');
     } catch (error) {
-      console.error('마이그레이션 오류:', error);
-      if (this.sqlite?.inTransaction) {
-        this.sqlite.exec('ROLLBACK;');
-      }
+      console.error('SQLite 마이그레이션 오류:', error);
       throw error;
     }
   }

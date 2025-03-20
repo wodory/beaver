@@ -4,11 +4,11 @@
  * 이 파일은 모든 테이블 스키마 정의를 하나로 통합하여 내보냅니다.
  */
 
-export * from './repositories';
-export * from './users';
-export * from './commits';
-export * from './pullRequests';
-export * from './reviews';
-export * from './teams';
-export * from './metricCache';
-export * from './jiraIssues'; 
+export * from './repositories.js';
+export * from './users.js';
+export * from './commits.js';
+export * from './pullRequests.js';
+export * from './reviews.js';
+export * from './teams.js';
+export * from './metricCache.js';
+export * from './jiraIssues.js'; 

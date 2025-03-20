@@ -1,6 +1,9 @@
+//MetricPanel에 쓰이는 녀석. 이걸로 통일해야 함. 
 import { ReactNode, useMemo } from "react"
 import { cn } from "@/lib/utils"
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card"
+
+
 
 // 메트릭 데이터 인터페이스
 export interface MetricItem {

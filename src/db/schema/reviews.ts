@@ -1,6 +1,6 @@
 import { pgTable, serial, integer, text, timestamp } from 'drizzle-orm/pg-core';
-import { pullRequests } from './pullRequests';
-import { users } from './users';
+import { pullRequests } from './pullRequests.js';
+import { users } from './users.js';
 
 /**
  * PR 리뷰 테이블 스키마 정의

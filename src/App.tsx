@@ -4,13 +4,13 @@ import { AppSidebar } from './components/app-sidebar'
 import { SiteHeader } from './components/site-header'
 import { FilterBar } from './components/metrics/filter-bar'
 import { MetricsDashboard } from './components/metrics/MetricsDashboard'
-import { DoraMetrics } from './components/metrics/dora-metrics'
-import { ExampleMetrics } from './components/metrics/example-metrics'
+// import { DoraMetrics } from './components/metrics/dora-metrics'
+import { MetricsPanelCard } from './components/metrics/MetricsPanelCard'
 import { TeamMetricsView } from './components/metrics/TeamMetricsView'
 import { TrendAnalysisView } from './components/metrics/TrendAnalysisView'
 import { SettingsPage } from './components/settings/SettingsPage'
 import { SidebarProvider } from '@/components/ui/sidebar'
-import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs'
+//import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs'
 
 interface FilterState {
   project: string;
@@ -114,14 +114,7 @@ function App() {
             
             {activeView === 'dora' && (
               <div className="space-y-12">
-                {/* 기존 DORA 메트릭스 */}
-                <DoraMetrics filterState={filterState} />
-
-                {/* 새로운 메트릭스 카드 */}
-                <div className="border-t pt-8">
-                  <h2 className="text-lg font-semibold mb-4">새로운 메트릭스 카드</h2>
-                  <ExampleMetrics filterState={filterState} />
-                </div>
+                <MetricsPanelCard filterState={filterState} />
               </div>
             )}
             

@@ -1,12 +1,12 @@
 import { sql } from 'drizzle-orm';
-import { integer, text, timestamp, sqliteTable } from 'drizzle-orm/sqlite-core';
+import { integer, text, timestamp, pgTable, serial } from 'drizzle-orm/pg-core';
 
 /**
  * JIRA 이슈 테이블 스키마
  */
-export const jiraIssues = sqliteTable('jira_issues', {
+export const jiraIssues = pgTable('jira_issues', {
   // 식별자
-  id: integer('id').primaryKey({ autoIncrement: true }),
+  id: serial('id').primaryKey(),
   
   // 저장소 외래 키
   repositoryId: integer('repository_id').notNull(),

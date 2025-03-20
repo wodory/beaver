@@ -1,6 +1,6 @@
 import { pgTable, serial, integer, text, timestamp, boolean } from 'drizzle-orm/pg-core';
-import { repositories } from './repositories';
-import { users } from './users';
+import { repositories } from './repositories.js';
+import { users } from './users.js';
 
 /**
  * Pull Request 테이블 스키마 정의

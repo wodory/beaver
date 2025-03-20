@@ -1,4 +1,4 @@
-import { sqliteTable, integer, text, blob } from 'drizzle-orm/sqlite-core';
+import { sqliteTable, integer, text } from 'drizzle-orm/sqlite-core';
 
 /**
  * 저장소 테이블 스키마 정의 (SQLite)

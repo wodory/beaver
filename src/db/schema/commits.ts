@@ -1,6 +1,6 @@
-import { pgTable, text, integer, timestamp, foreignKey } from 'drizzle-orm/pg-core';
-import { repositories } from './repositories';
-import { users } from './users';
+import { pgTable, text, integer, timestamp } from 'drizzle-orm/pg-core';
+import { repositories } from './repositories.js';
+import { users } from './users.js';
 
 /**
  * 커밋 테이블 스키마 정의

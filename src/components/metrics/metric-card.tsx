@@ -1,7 +1,9 @@
+// 메인에서 쓰이는 녀석. 이건 삭제하고다른 걸로 재사용해야 함. 
+
 import { cn } from "@/lib/utils"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
-import { HelpCircle } from "lucide-react"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
+import { HelpCircle } from "lucide-react"
 
 interface MetricCardProps {
   title: string

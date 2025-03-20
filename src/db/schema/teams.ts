@@ -1,5 +1,5 @@
 import { pgTable, serial, text, integer, timestamp } from 'drizzle-orm/pg-core';
-import { users } from './users';
+import { users } from './users.js';
 
 /**
  * 팀 테이블 스키마 정의
