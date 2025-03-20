@@ -9,6 +9,7 @@ import { Textarea } from "@/components/ui/textarea"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { useUserSettings, useGitHubSettings, useJiraSettings } from "../../hooks/useSettings"
 import { toast } from "sonner"
+import { AccountsTab } from "./AccountsTab"
 
 export function SettingsPage() {
   // 사용자 설정 훅 사용
@@ -35,18 +36,6 @@ export function SettingsPage() {
     updateSettings: updateJiraSettings
   } = useJiraSettings();
 
-  // GitHub 저장소 상태 관리
-  const [repositoriesText, setRepositoriesText] = useState(() => {
-    return githubSettings?.repositories?.join('\n') || '';
-  });
-
-  // 저장소 목록 변경 시 텍스트 업데이트
-  useEffect(() => {
-    if (githubSettings && githubSettings.repositories) {
-      setRepositoriesText(githubSettings.repositories.join('\n'));
-    }
-  }, [githubSettings]);
-
   // 사용자 설정 저장 핸들러
   const handleSaveUserSettings = useCallback(async () => {
     if (!userSettings) return;
@@ -58,28 +47,6 @@ export function SettingsPage() {
       toast.error("설정 저장에 실패했습니다.");
     }
   }, [userSettings, updateUserSettings]);
-
-  // GitHub 설정 저장 핸들러
-  const handleSaveGitHubSettings = useCallback(async () => {
-    if (!githubSettings) return;
-    
-    // 저장소 텍스트를 배열로 변환
-    const repositories = repositoriesText
-      .split('\n')
-      .map(repo => repo.trim())
-      .filter(Boolean);
-
-    const success = await updateGitHubSettings({
-      ...githubSettings,
-      repositories
-    });
-
-    if (success) {
-      toast.success("GitHub 설정이 저장되었습니다.");
-    } else {
-      toast.error("GitHub 설정 저장에 실패했습니다.");
-    }
-  }, [githubSettings, repositoriesText, updateGitHubSettings]);
 
   // Jira 설정 저장 핸들러
   const handleSaveJiraSettings = useCallback(async () => {
@@ -115,7 +82,7 @@ export function SettingsPage() {
       <div>
         <h1 className="text-2xl font-bold tracking-tight">설정 및 관리</h1>
         <p className="text-muted-foreground">
-          애플리케이션 설정을 관리하고 사용자 정보를 업데이트합니다.
+          애플리케이션 설정을 관리하고 GitHub 및 Jira 연동 정보를 업데이트합니다.
         </p>
       </div>
 
@@ -123,7 +90,7 @@ export function SettingsPage() {
         <TabsList className="grid w-full grid-cols-4">
           <TabsTrigger value="general">일반</TabsTrigger>
           <TabsTrigger value="account">계정</TabsTrigger>
-          <TabsTrigger value="github">GitHub 연동</TabsTrigger>
+          <TabsTrigger value="integrations">연동 관리</TabsTrigger>
           <TabsTrigger value="jira">Jira 연동</TabsTrigger>
         </TabsList>
         
@@ -257,64 +224,8 @@ export function SettingsPage() {
           </Card>
         </TabsContent>
         
-        <TabsContent value="github" className="space-y-4 pt-4">
-          <Card>
-            <CardHeader>
-              <CardTitle>GitHub 연동 설정</CardTitle>
-              <CardDescription>
-                GitHub 계정 연결 및 권한 설정을 관리합니다.
-              </CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              {!githubSettings ? (
-                <div>GitHub 설정을 불러올 수 없습니다.</div>
-              ) : (
-                <>
-                  <div className="space-y-2">
-                    <Label htmlFor="githubToken">GitHub 개인 액세스 토큰</Label>
-                    <Input 
-                      id="githubToken" 
-                      type="password" 
-                      value={githubSettings.token} 
-                      onChange={(e) => updateGitHubSettings({ token: e.target.value })}
-                      placeholder="GitHub 개인 액세스 토큰을 입력하세요"
-                    />
-                    <p className="text-sm text-muted-foreground">
-                      GitHub API를 사용하기 위한 토큰입니다. 
-                      <a href="https://github.com/settings/tokens" target="_blank" rel="noopener noreferrer" className="text-blue-500 hover:underline"> 토큰 생성하기</a>
-                    </p>
-                  </div>
-                  
-                  <div className="space-y-2">
-                    <Label htmlFor="organization">조직 이름</Label>
-                    <Input 
-                      id="organization" 
-                      value={githubSettings.organization} 
-                      onChange={(e) => updateGitHubSettings({ organization: e.target.value })}
-                      placeholder="GitHub 조직 이름을 입력하세요"
-                    />
-                  </div>
-                  
-                  <div className="space-y-2">
-                    <Label htmlFor="repositories">저장소 목록</Label>
-                    <Textarea 
-                      id="repositories" 
-                      value={repositoriesText} 
-                      onChange={(e) => setRepositoriesText(e.target.value)}
-                      placeholder="각 줄에 저장소 이름을 입력하세요"
-                      rows={5}
-                    />
-                    <p className="text-sm text-muted-foreground">
-                      각 줄에 하나의 저장소 이름을 입력하세요. 예: owner/repository
-                    </p>
-                  </div>
-                </>
-              )}
-            </CardContent>
-            <CardFooter>
-              <Button onClick={handleSaveGitHubSettings} disabled={githubLoading || !githubSettings}>GitHub 설정 저장</Button>
-            </CardFooter>
-          </Card>
+        <TabsContent value="integrations" className="space-y-4 pt-4">
+          <AccountsTab />
         </TabsContent>
         
         <TabsContent value="jira" className="space-y-4 pt-4">

@@ -5,6 +5,8 @@
   "type": "module",
   "scripts": {
     "dev": "node scripts/checkPort.js && vite",
+    "api": "node scripts/checkApiPort.js && node --loader=ts-node/esm src/scripts/start-api-server.js",
+    "dev:all": "concurrently \"yarn dev\" \"yarn api\"",
     "build": "tsc -b && vite build",
     "lint": "eslint . --ext ts,tsx --report-unused-disable-directives --max-warnings 0",
     "preview": "vite preview",
@@ -20,6 +22,9 @@
     "db:push:sqlite": "drizzle-kit push --config=drizzle.sqlite.config.ts",
     "db:studio": "drizzle-kit studio",
     "db:migrate-data": "tsx src/scripts/migrate-data.ts",
+    "migrate-settings": "node --loader=ts-node/esm src/scripts/migrate-settings.ts",
+    "update-settings": "node --loader=ts-node/esm src/scripts/update-default-settings.js",
+    "create-settings-db": "node --loader=ts-node/esm src/scripts/create-settings-table.js",
     "test:repo-manager": "tsx src/scripts/test-repository-manager.ts",
     "test:github": "tsx src/tests/github-api-test.ts",
     "test:sync": "tsx src/tests/sync-manager-test.ts",
@@ -29,7 +34,8 @@
     "init-db": "node src/scripts/init-db.cjs",
     "check-db": "node src/scripts/check-db.cjs",
     "init-settings": "node src/scripts/init-settings-db.cjs",
-    "api": "node --loader=ts-node/esm src/scripts/start-api-server.js"
+    "init-accounts-settings": "node --loader=ts-node/esm src/scripts/init-accounts-settings.js",
+    "init-accounts-with-examples": "node --loader=ts-node/esm src/scripts/init-accounts-settings.js --add-examples"
   },
   "dependencies": {
     "@fastify/cors": "^11.0.0",
@@ -84,6 +90,7 @@
     "@types/react-dom": "^19.0.4",
     "@vitejs/plugin-react": "^4.3.4",
     "autoprefixer": "^10.4.21",
+    "concurrently": "^9.1.2",
     "drizzle-kit": "^0.30.5",
     "eslint": "^9.21.0",
     "eslint-plugin-react-hooks": "^5.1.0",

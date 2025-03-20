@@ -5,6 +5,16 @@ import { JiraConfigManager } from './JiraConfigManager.js';
 import { logger } from '../../utils/logger.js';
 
 /**
+ * Jira 설정 인터페이스
+ */
+export interface JiraCollectorSettings {
+  baseUrl: string;
+  username: string;
+  apiToken: string;
+  projectKeys: string[];
+}
+
+/**
  * JIRA 데이터 수집기 클래스
  * 실제 JIRA API 또는 Mock 데이터를 사용하여 JIRA 데이터를 수집합니다.
  */
@@ -22,6 +32,41 @@ export class JiraDataCollector {
     this.adapter = useMock ? new MockJiraAdapter() : new JiraApiAdapter();
     this.configManager = new JiraConfigManager();
     logger.info(`JIRA 데이터 수집기가 생성되었습니다. 모드: ${useMock ? '목업' : '실제 API'}`);
+  }
+
+  /**
+   * 설정을 업데이트하고 어댑터를 다시 초기화합니다.
+   * @param settings - JIRA 설정
+   */
+  async updateSettings(settings: JiraCollectorSettings): Promise<boolean> {
+    try {
+      logger.info('JIRA 설정 업데이트 중...');
+      
+      // 설정을 JiraConfig 형식으로 변환
+      const config = {
+        baseUrl: settings.baseUrl,
+        username: settings.username,
+        apiToken: settings.apiToken,
+        projectKeys: settings.projectKeys
+      };
+      
+      // 어댑터 초기화
+      await this.adapter.initialize(config);
+      
+      // 연결 테스트
+      const connected = await this.adapter.testConnection();
+      if (!connected) {
+        logger.error('업데이트된 JIRA 설정으로 연결 테스트에 실패했습니다.');
+        return false;
+      }
+      
+      this.initialized = true;
+      logger.info('JIRA 설정이 업데이트되었습니다.');
+      return true;
+    } catch (error) {
+      logger.error('JIRA 설정 업데이트 중 오류 발생:', error);
+      return false;
+    }
   }
 
   /**

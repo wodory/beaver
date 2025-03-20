@@ -1,16 +1,17 @@
 import { GitCommitCollector } from './GitCommitCollector';
 import { GitServiceFactory } from './GitServiceFactory';
 import { RepositoryInfo } from './IGitServiceAdapter';
-import { dbAdapter } from '../../db';
+import { getDB } from '../../db';
 import { schemaToUse as schema } from '../../db';
 import { eq } from 'drizzle-orm';
 import fs from 'fs/promises';
 import path from 'path';
 import config from '../../config.json';
-import { GitHubApiCollector } from '../github/GitHubApiCollector';
+import { GitHubApiCollector, GitHubApiSettings } from '../github/GitHubApiCollector';
 import { logger } from '../../utils/logger';
-import { JiraDataCollector } from '../jira/JiraDataCollector';
+import { JiraDataCollector, JiraCollectorSettings } from '../jira/JiraDataCollector';
 import { JiraIssue } from '../jira/IJiraAdapter';
+import { SettingsService } from '../../api/server/settings-service.js';
 
 /**
  * 동기화 관리자
@@ -22,6 +23,7 @@ export class SyncManager {
   private commitCollector: GitCommitCollector;
   private githubApiCollector: GitHubApiCollector;
   private jiraDataCollector: JiraDataCollector;
+  private settingsService: SettingsService;
   private basePath: string;
   
   constructor(useMockJira: boolean = false) {
@@ -29,7 +31,52 @@ export class SyncManager {
     this.commitCollector = new GitCommitCollector();
     this.githubApiCollector = new GitHubApiCollector();
     this.jiraDataCollector = new JiraDataCollector(useMockJira);
+    this.settingsService = new SettingsService();
     this.basePath = config.defaultPaths?.repoStorage || './repos';
+    
+    // 설정 로드
+    this.loadSettings();
+  }
+  
+  /**
+   * NeonDB에서 설정을 로드하고 각 서비스에 적용합니다.
+   */
+  private async loadSettings(): Promise<void> {
+    try {
+      // GitHub 설정 로드
+      const githubSettings = await this.settingsService.getGitHubSettings();
+      
+      if (githubSettings) {
+        logger.info('GitHub 설정을 로드하여 API 클라이언트에 적용합니다.');
+        
+        const apiSettings: GitHubApiSettings = {
+          token: githubSettings.token,
+          enterpriseUrl: githubSettings.enterpriseUrl
+        };
+        
+        // GitHub API 클라이언트 설정 업데이트
+        this.githubApiCollector.updateSettings(apiSettings);
+      }
+      
+      // Jira 설정 로드
+      const jiraSettings = await this.settingsService.getJiraSettings();
+      
+      if (jiraSettings && jiraSettings.url && jiraSettings.apiToken) {
+        logger.info('Jira 설정을 로드하여 클라이언트에 적용합니다.');
+        
+        const jiraConfig: JiraCollectorSettings = {
+          baseUrl: jiraSettings.url,
+          username: jiraSettings.email,
+          apiToken: jiraSettings.apiToken,
+          projectKeys: jiraSettings.projectKey ? [jiraSettings.projectKey] : []
+        };
+        
+        await this.jiraDataCollector.updateSettings(jiraConfig);
+      }
+    } catch (error) {
+      logger.error('설정 로드 중 오류 발생:', error);
+      logger.info('환경 변수의 기본 설정을 사용합니다.');
+    }
   }
   
   /**
@@ -38,32 +85,34 @@ export class SyncManager {
    * @returns 저장소 정보
    */
   async getRepository(repoId: number): Promise<RepositoryInfo | null> {
-    if (!dbAdapter.db) {
-      throw new Error('데이터베이스가 초기화되지 않았습니다.');
-    }
-    
-    const repos = await dbAdapter.select(
-      dbAdapter.db.select()
+    try {
+      const db = getDB();
+      
+      const repos = await db.select()
         .from(schema.repositories)
-        .where(eq(schema.repositories.id, repoId))
-    );
-    
-    if (repos.length === 0) {
+        .where(eq(schema.repositories.id, repoId));
+      
+      if (repos.length === 0) {
+        return null;
+      }
+      
+      const repo = repos[0];
+      
+      return {
+        id: repo.id,
+        name: repo.name,
+        fullName: repo.fullName,
+        cloneUrl: repo.cloneUrl,
+        type: repo.type as 'github' | 'gitlab' | 'github-enterprise' | 'other',
+        apiUrl: repo.apiUrl,
+        apiToken: repo.apiToken,
+        localPath: repo.localPath,
+        lastSyncAt: repo.lastSyncAt
+      };
+    } catch (error) {
+      logger.error(`저장소 정보 조회 실패 (ID: ${repoId}):`, error);
       return null;
     }
-    
-    const repo = repos[0];
-    
-    return {
-      id: repo.id,
-      name: repo.name,
-      fullName: repo.fullName,
-      cloneUrl: repo.cloneUrl,
-      type: repo.type as 'github' | 'gitlab' | 'github-enterprise' | 'other',
-      apiUrl: repo.apiUrl,
-      apiToken: repo.apiToken,
-      localPath: repo.localPath
-    };
   }
   
   /**
@@ -72,14 +121,12 @@ export class SyncManager {
    */
   async getAllRepositories(): Promise<RepositoryInfo[]> {
     // Phase 1에서 이미 완료된 기능 사용
-    if (!dbAdapter.db) {
+    if (!getDB()) {
       throw new Error('데이터베이스가 초기화되지 않았습니다.');
     }
     
-    const repos = await dbAdapter.select(
-      dbAdapter.db.select()
-        .from(schema.repositories)
-    );
+    const repos = await getDB().select()
+      .from(schema.repositories);
     
     return repos.map(repo => ({
       id: repo.id,
@@ -208,7 +255,7 @@ export class SyncManager {
       }
       
       // 마지막 동기화 시간 업데이트
-      await dbAdapter.update(
+      await getDB().update(
         schema.repositories,
         { lastSyncAt: new Date() },
         eq(schema.repositories.id, repoId)
@@ -321,7 +368,7 @@ export class SyncManager {
    * @returns 저장된 이슈 수
    */
   private async storeJiraIssues(repoInfo: RepositoryInfo, issues: JiraIssue[]): Promise<number> {
-    if (!dbAdapter.db) {
+    if (!getDB()) {
       throw new Error('데이터베이스가 초기화되지 않았습니다.');
     }
     
@@ -336,11 +383,9 @@ export class SyncManager {
       for (const issue of issues) {
         try {
           // 기존 이슈 조회 (DB에 이미 존재하는지 확인)
-          const existingIssues = await dbAdapter.select(
-            dbAdapter.db.select()
-              .from(schema.jiraIssues)
-              .where(eq(schema.jiraIssues.key, issue.key))
-          );
+          const existingIssues = await getDB().select()
+            .from(schema.jiraIssues)
+            .where(eq(schema.jiraIssues.key, issue.key));
           
           const issueData = {
             repositoryId: repoInfo.id,
@@ -358,14 +403,14 @@ export class SyncManager {
           
           if (existingIssues.length > 0) {
             // 이슈가 이미 존재하면 업데이트
-            await dbAdapter.update(
+            await getDB().update(
               schema.jiraIssues,
               issueData,
               eq(schema.jiraIssues.key, issue.key)
             );
           } else {
             // 새 이슈 삽입
-            await dbAdapter.insert(schema.jiraIssues, issueData);
+            await getDB().insert(schema.jiraIssues).values(issueData).returning({ id: sql<number>`inserted.id` });
             insertCount++;
           }
         } catch (error) {
@@ -433,13 +478,13 @@ export class SyncManager {
           }
           
           // 기존 PR 확인
-          const existingPRs = await dbAdapter.query(`
+          const existingPRs = await getDB().query(`
             SELECT * FROM pull_requests WHERE repository_id = ? AND number = ?
           `, [repoInfo.id, pr.number]);
           
           if (existingPRs && existingPRs.length > 0) {
             // 기존 PR 업데이트
-            await dbAdapter.update(
+            await getDB().update(
               schema.pullRequests,
               {
                 title: pr.title,
@@ -460,7 +505,7 @@ export class SyncManager {
             logger.debug(`PR #${pr.number} 업데이트 완료`);
           } else {
             // 새 PR 추가
-            await dbAdapter.insert(schema.pullRequests, {
+            await getDB().insert(schema.pullRequests).values({
               repositoryId: repoInfo.id,
               number: pr.number,
               title: pr.title,
@@ -476,7 +521,7 @@ export class SyncManager {
               closedAt: pr.closed_at ? new Date(pr.closed_at) : null,
               mergedAt: pr.merged_at ? new Date(pr.merged_at) : null,
               mergedBy: mergedById
-            });
+            }).returning({ id: sql<number>`inserted.id` });
             
             logger.debug(`PR #${pr.number} 추가 완료`);
           }
@@ -505,7 +550,7 @@ export class SyncManager {
     
     try {
       // PR ID 찾기
-      const pullRequests = await dbAdapter.query(`
+      const pullRequests = await getDB().query(`
         SELECT id FROM pull_requests WHERE repository_id = ? AND number = ?
       `, [repoInfo.id, prNumber]);
       
@@ -525,13 +570,13 @@ export class SyncManager {
           }
           
           // 기존 리뷰 확인
-          const existingReviews = await dbAdapter.query(`
+          const existingReviews = await getDB().query(`
             SELECT * FROM pr_reviews WHERE id = ?
           `, [review.id]);
           
           if (!existingReviews || existingReviews.length === 0) {
             // 새 리뷰 추가
-            await dbAdapter.insert(schema.prReviews, {
+            await getDB().insert(schema.prReviews).values({
               id: review.id,
               pullRequestId: prId,
               reviewerId,
@@ -540,7 +585,7 @@ export class SyncManager {
               submittedAt: new Date(review.submitted_at),
               createdAt: new Date(),
               updatedAt: new Date()
-            });
+            }).returning({ id: sql<number>`inserted.id` });
             
             logger.debug(`PR #${prNumber}의 리뷰 ${review.id} 추가 완료`);
             storedCount++;
@@ -566,7 +611,7 @@ export class SyncManager {
   private async getOrCreateUser(login: string, githubId: number, avatarUrl?: string): Promise<number> {
     try {
       // 기존 사용자 찾기
-      const existingUsers = await dbAdapter.query(`
+      const existingUsers = await getDB().query(`
         SELECT * FROM users WHERE github_id = ?
       `, [githubId]);
       
@@ -575,13 +620,13 @@ export class SyncManager {
       }
       
       // 새 사용자 생성
-      const result = await dbAdapter.insert(schema.users, {
+      const result = await getDB().insert(schema.users).values({
         login,
         githubId,
         avatarUrl: avatarUrl || null,
         name: null,
         email: null
-      });
+      }).returning({ id: sql<number>`inserted.id` });
       
       return result.id;
     } catch (error) {

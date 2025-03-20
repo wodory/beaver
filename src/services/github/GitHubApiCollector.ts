@@ -11,15 +11,23 @@ interface Domain {
 }
 
 /**
+ * GitHub 설정 인터페이스
+ */
+export interface GitHubApiSettings {
+  token: string;
+  enterpriseUrl?: string;
+}
+
+/**
  * GitHub API를 통해 Pull Request와 리뷰 데이터를 수집하는 클래스
  */
 export class GitHubApiCollector {
-  private octokit: Octokit;
-  private graphqlWithAuth: any;
-  private token: string;
-  private baseUrl: string;
-  private apiUrl: string;
-  private graphqlUrl: string;
+  private octokit: Octokit = new Octokit();
+  private graphqlWithAuth: any = null;
+  private token: string = '';
+  private baseUrl: string = 'https://api.github.com';
+  private apiUrl: string = 'https://api.github.com';
+  private graphqlUrl: string = 'https://api.github.com/graphql';
   private useAuth: boolean = true;
 
   constructor(domain?: Domain) {
@@ -52,70 +60,78 @@ export class GitHubApiCollector {
       this.useAuth = false;
     }
     
-    // URL 정보 로그 출력
-    logger.info(`GitHub API 기본 URL: ${this.baseUrl}`);
-    logger.info(`REST API URL: ${this.apiUrl}`);
-    logger.info(`GraphQL API URL: ${this.graphqlUrl}`);
+    this.initializeClients();
+  }
+  
+  /**
+   * GitHub 설정을 업데이트합니다.
+   * 
+   * @param settings GitHub API 설정
+   */
+  updateSettings(settings: GitHubApiSettings): void {
+    let needsReinit = false;
     
-    try {
-      // Octokit 옵션 설정
-      const options: any = {
-        baseUrl: this.apiUrl,
-        throttle: {
-          onRateLimit: (retryAfter: number, _options: any, _octokit: any, retryCount: number) => {
-            logger.warn(`GitHub API 호출 제한 도달 - ${retryCount + 1}번째 시도 (${retryAfter}초 후 재시도)`);
-            if (retryCount < 3) return true; // 최대 3번 재시도
-            return false;
-          },
-          onSecondaryRateLimit: (retryAfter: number, _options: any, _octokit: any) => {
-            logger.warn(`GitHub API 보조 제한 도달 - ${retryAfter}초 후 재시도`);
-            return true;
-          },
-        }
-      };
-      
-      // 인증 옵션 추가
-      if (this.useAuth && this.token) {
-        options.auth = this.token;
-        logger.info('REST API 인증 사용: 토큰 인증 설정됨');
-      } else {
-        logger.info('REST API 인증 사용하지 않음: 인증 없이 접근 (제한된 요청만 가능)');
-      }
-      
-      this.octokit = new Octokit(options);
-    } catch (error) {
-      logger.error(`Octokit 초기화 중 오류: ${error}`);
-      // 인증 없이 재시도
-      this.octokit = new Octokit({
-        baseUrl: this.apiUrl
-      });
-      logger.info('인증 오류로 인해 인증 없이 Octokit 초기화');
+    // 토큰이 변경되었는지 확인
+    if (settings.token && settings.token !== this.token) {
+      this.token = settings.token;
+      needsReinit = true;
     }
     
-    try {
-      // GraphQL 클라이언트 설정
-      const graphqlOptions: any = {
-        url: this.graphqlUrl
-      };
+    // 엔터프라이즈 URL이 변경되었는지 확인
+    if (settings.enterpriseUrl) {
+      const newBaseUrl = settings.enterpriseUrl;
       
-      // 인증 옵션 추가
-      if (this.useAuth && this.token) {
-        graphqlOptions.headers = {
-          authorization: `token ${this.token}` // GitHub에서는 'token ' 접두사 사용
-        };
-        logger.info('GraphQL API 인증 사용: 토큰 인증 설정됨');
-      } else {
-        logger.info('GraphQL API 인증 사용하지 않음: 인증 없이 접근 (제한된 요청만 가능)');
+      if (newBaseUrl !== this.baseUrl) {
+        this.baseUrl = newBaseUrl;
+        
+        if (this.baseUrl === 'https://api.github.com') {
+          this.apiUrl = this.baseUrl;
+          this.graphqlUrl = 'https://api.github.com/graphql';
+        } else {
+          this.apiUrl = this.baseUrl.endsWith('/') 
+            ? `${this.baseUrl}api/v3` 
+            : `${this.baseUrl}/api/v3`;
+          this.graphqlUrl = this.baseUrl.endsWith('/') 
+            ? `${this.baseUrl}api/graphql` 
+            : `${this.baseUrl}/api/graphql`;
+        }
+        
+        needsReinit = true;
       }
-      
-      this.graphqlWithAuth = graphql.defaults(graphqlOptions);
-    } catch (error) {
-      logger.error(`GraphQL 클라이언트 초기화 중 오류: ${error}`);
-      // 인증 없이 재시도
+    }
+    
+    // 인증 필요 여부 확인
+    this.useAuth = !!this.token;
+    
+    // 클라이언트 재초기화
+    if (needsReinit) {
+      this.initializeClients();
+    }
+  }
+  
+  /**
+   * API 클라이언트를 초기화합니다.
+   */
+  private initializeClients(): void {
+    // Octokit 인스턴스 생성 (REST API용)
+    const octokitOptions: any = {
+      baseUrl: this.apiUrl
+    };
+    
+    if (this.useAuth) {
+      octokitOptions.auth = this.token;
+    }
+    
+    this.octokit = new Octokit(octokitOptions);
+    
+    // GraphQL 클라이언트 생성
+    if (this.useAuth) {
       this.graphqlWithAuth = graphql.defaults({
-        url: this.graphqlUrl
+        baseUrl: this.graphqlUrl,
+        headers: {
+          authorization: `token ${this.token}`
+        }
       });
-      logger.info('인증 오류로 인해 인증 없이 GraphQL 클라이언트 초기화');
     }
   }
 
