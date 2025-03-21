@@ -100,6 +100,7 @@
     "eslint-plugin-react-refresh": "^0.4.19",
     "globals": "^15.15.0",
     "jsdom": "^26.0.0",
+    "msw": "^2.7.3",
     "postcss": "^8.5.3",
     "shadcn": "^2.4.0-canary.14",
     "ts-node": "^10.9.2",
