@@ -112,22 +112,37 @@ export class GitHubDataCollector {
       
       // 페이지네이션을 통한 모든 커밋 수집
       while (hasNextPage) {
-        const { commits: commitData, pageInfo } = await this.fetchCommitBatch(
-          this.owner, 
-          this.repo, 
-          lastSyncAt.toISOString(),
-          cursor
-        );
-        
-        // 수집된 커밋 처리
-        const savedCount = await this.saveCommits(commitData);
-        newCommitCount += savedCount;
-        
-        // 페이지네이션 정보 업데이트
-        hasNextPage = pageInfo.hasNextPage;
-        cursor = pageInfo.endCursor;
-        
-        logger.info(`커밋 배치 처리 완료: ${savedCount}개 저장, 다음 페이지: ${hasNextPage}`);
+        try {
+          const { commits: commitData, pageInfo } = await this.fetchCommitBatch(
+            this.owner, 
+            this.repo, 
+            lastSyncAt.toISOString(),
+            cursor
+          );
+          
+          // 수집된 커밋 처리
+          const savedCount = await this.saveCommits(commitData);
+          newCommitCount += savedCount;
+          
+          // 페이지네이션 정보 업데이트
+          hasNextPage = pageInfo.hasNextPage;
+          cursor = pageInfo.endCursor;
+          
+          logger.info(`커밋 배치 처리 완료: ${savedCount}개 저장, 다음 페이지: ${hasNextPage}`);
+        } catch (error) {
+          // API 호출 에러 처리
+          logger.error(`커밋 배치 처리 중 오류 발생: ${error instanceof Error ? error.message : String(error)}`);
+          
+          // 레이트 리밋 에러면 전체 동기화 중단
+          if (error instanceof Error && 
+              (error.message.includes('rate limit') || 
+              error.message.includes('API rate limit exceeded'))) {
+            throw error;
+          }
+          
+          // 다른 에러의 경우 다음 페이지로 이동
+          hasNextPage = false;
+        }
       }
       
       logger.info(`커밋 수집 완료: 총 ${newCommitCount}개의 새 커밋 수집됨`);
@@ -207,8 +222,7 @@ export class GitHubDataCollector {
       
       return { commits, pageInfo };
     } catch (error) {
-      logger.error(`GitHub GraphQL API 호출 중 오류 발생: ${error instanceof Error ? error.message : String(error)}`);
-      throw error;
+      return this.handleGitHubApiError(error);
     }
   }
 
@@ -372,26 +386,57 @@ export class GitHubDataCollector {
     pullRequestCount: number;
     reviewCount: number;
   }> {
+    let commitCount = 0;
+    let pullRequestCount = 0;
+    let reviewCount = 0;
+    
     try {
-      // 1. 커밋 데이터 수집
-      logger.info(`저장소 ID ${this.repositoryId} 커밋 데이터 동기화 시작`);
-      const commitCount = await this.collectCommits();
+      // 동기화 시작 로깅
+      logger.info(`저장소 ID ${this.repositoryId} 전체 데이터 동기화 시작`);
       
-      // 2. PR 및 리뷰 데이터 수집
-      logger.info(`저장소 ID ${this.repositoryId} PR 데이터 동기화 시작`);
-      const { pullRequestCount, reviewCount } = await this.collectPullRequestsAndReviews();
+      try {
+        // 1. 커밋 데이터 수집
+        logger.info(`저장소 ID ${this.repositoryId} 커밋 데이터 동기화 시작`);
+        commitCount = await this.collectCommits();
+        logger.info(`저장소 ID ${this.repositoryId} 커밋 데이터 동기화 완료: ${commitCount}개 커밋`);
+      } catch (error) {
+        logger.error(`저장소 ID ${this.repositoryId} 커밋 데이터 동기화 실패: ${error instanceof Error ? error.message : String(error)}`);
+        // 커밋 동기화가 실패해도 PR 동기화는 계속 진행
+      }
       
-      // 3. 동기화 시간 업데이트
-      await this.updateLastSyncAt();
+      try {
+        // 2. PR 및 리뷰 데이터 수집
+        logger.info(`저장소 ID ${this.repositoryId} PR 데이터 동기화 시작`);
+        const prResult = await this.collectPullRequestsAndReviews();
+        pullRequestCount = prResult.pullRequestCount;
+        reviewCount = prResult.reviewCount;
+        logger.info(`저장소 ID ${this.repositoryId} PR 데이터 동기화 완료: ${pullRequestCount}개 PR, ${reviewCount}개 리뷰`);
+      } catch (error) {
+        logger.error(`저장소 ID ${this.repositoryId} PR 데이터 동기화 실패: ${error instanceof Error ? error.message : String(error)}`);
+        // PR 동기화가 실패해도 최대한 진행
+      }
+      
+      // 3. 동기화 완료 후 마지막 동기화 시간 업데이트
+      // 일부 데이터만 동기화되었더라도 동기화 시간은 업데이트
+      if (commitCount > 0 || pullRequestCount > 0) {
+        try {
+          await this.updateLastSyncAt();
+          logger.info(`저장소 ID ${this.repositoryId} 마지막 동기화 시간 업데이트 완료`);
+        } catch (updateError) {
+          logger.error(`저장소 ID ${this.repositoryId} 동기화 시간 업데이트 실패: ${updateError instanceof Error ? updateError.message : String(updateError)}`);
+          // 시간 업데이트 실패는 결과에 영향 없음
+        }
+      }
       
       // 결과 반환
+      logger.info(`저장소 ID ${this.repositoryId} 전체 데이터 동기화 완료`);
       return {
         commitCount,
         pullRequestCount,
         reviewCount
       };
     } catch (error) {
-      logger.error(`저장소 ID ${this.repositoryId} 데이터 동기화 중 오류: ${error instanceof Error ? error.message : String(error)}`);
+      logger.error(`저장소 ID ${this.repositoryId} 데이터 동기화 중 치명적 오류: ${error instanceof Error ? error.message : String(error)}`);
       throw error;
     }
   }
@@ -418,23 +463,38 @@ export class GitHubDataCollector {
       
       // 페이지네이션을 통한 모든 PR 수집
       while (hasNextPage) {
-        const { pullRequests: prData, pageInfo } = await this.fetchPullRequestBatch(
-          this.owner, 
-          this.repo, 
-          lastSyncAt.toISOString(),
-          cursor
-        );
-        
-        // 수집된 PR 및 리뷰 처리
-        const { prCount, reviewCount } = await this.savePullRequestsAndReviews(prData);
-        newPrCount += prCount;
-        newReviewCount += reviewCount;
-        
-        // 페이지네이션 정보 업데이트
-        hasNextPage = pageInfo.hasNextPage;
-        cursor = pageInfo.endCursor;
-        
-        logger.info(`PR 배치 처리 완료: ${prCount}개 PR, ${reviewCount}개 리뷰 저장, 다음 페이지: ${hasNextPage}`);
+        try {
+          const { pullRequests: prData, pageInfo } = await this.fetchPullRequestBatch(
+            this.owner, 
+            this.repo, 
+            lastSyncAt.toISOString(),
+            cursor
+          );
+          
+          // 수집된 PR 및 리뷰 처리
+          const { prCount, reviewCount } = await this.savePullRequestsAndReviews(prData);
+          newPrCount += prCount;
+          newReviewCount += reviewCount;
+          
+          // 페이지네이션 정보 업데이트
+          hasNextPage = pageInfo.hasNextPage;
+          cursor = pageInfo.endCursor;
+          
+          logger.info(`PR 배치 처리 완료: ${prCount}개 PR, ${reviewCount}개 리뷰 저장, 다음 페이지: ${hasNextPage}`);
+        } catch (error) {
+          // API 호출 에러 처리
+          logger.error(`PR 배치 처리 중 오류 발생: ${error instanceof Error ? error.message : String(error)}`);
+          
+          // 레이트 리밋 에러면 전체 동기화 중단
+          if (error instanceof Error && 
+             (error.message.includes('rate limit') || 
+             error.message.includes('API rate limit exceeded'))) {
+            throw error;
+          }
+          
+          // 다른 에러의 경우 다음 페이지로 이동
+          hasNextPage = false;
+        }
       }
       
       logger.info(`PR 및 리뷰 수집 완료: 총 ${newPrCount}개의 새 PR, ${newReviewCount}개의 새 리뷰 수집됨`);
@@ -515,9 +575,6 @@ export class GitHubDataCollector {
                     endCursor
                   }
                 }
-                comments(first: 1) {
-                  totalCount
-                }
               }
               pageInfo {
                 hasNextPage
@@ -552,8 +609,7 @@ export class GitHubDataCollector {
         pageInfo: prData.pageInfo 
       };
     } catch (error) {
-      logger.error(`GitHub GraphQL API 호출 중 오류 발생: ${error instanceof Error ? error.message : String(error)}`);
-      throw error;
+      return this.handleGitHubApiError(error);
     }
   }
 
@@ -762,5 +818,36 @@ export class GitHubDataCollector {
     }
     
     return null;
+  }
+
+  /**
+   * GitHub API 에러 처리 메서드
+   * 다양한 GitHub API 에러를 분류하고 적절한 응답을 반환
+   */
+  private handleGitHubApiError(error: any): never {
+    // 에러 객체 확인
+    const message = error instanceof Error ? error.message : String(error);
+    
+    // 레이트 리밋 에러 확인
+    if (message.includes('rate limit') || message.includes('API rate limit exceeded')) {
+      logger.error(`GitHub API 레이트 리밋 초과: ${message}`);
+      throw new Error(`GitHub API 레이트 리밋 초과. 잠시 후 다시 시도해주세요.`);
+    }
+    
+    // 인증 에러 확인
+    if (message.includes('Unauthorized') || message.includes('Bad credentials') || message.includes('Not authorized')) {
+      logger.error(`GitHub API 인증 오류: ${message}`);
+      throw new Error(`GitHub API 인증에 실패했습니다. 액세스 토큰을 확인해주세요.`);
+    }
+    
+    // 저장소 접근 오류
+    if (message.includes('Not Found') || message.includes('resource not accessible by integration')) {
+      logger.error(`GitHub 저장소 접근 오류: ${message}`);
+      throw new Error(`GitHub 저장소에 접근할 수 없습니다. 저장소 이름과 권한을 확인해주세요.`);
+    }
+    
+    // 기타 에러
+    logger.error(`GitHub API 호출 중 오류 발생: ${message}`);
+    throw new Error(`GitHub API 호출 중 오류가 발생했습니다: ${message}`);
   }
 } 
