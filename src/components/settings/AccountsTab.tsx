@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from "react";
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Plus, Edit2, Trash2, RefreshCw, ExternalLink } from "lucide-react";
+import { Plus, Edit2, Trash2, RefreshCw, ExternalLink, Database, Loader2 } from "lucide-react";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useAccounts } from "@/hooks/useAccounts";
 import { AccountDialog, AccountFormData } from "./AccountDialog";
@@ -11,6 +11,15 @@ import { Badge } from "@/components/ui/badge";
 import { toast } from "sonner";
 import { useGitHubSettings } from "../../hooks/useSettings";
 import { ScrollArea } from "../ui/scroll-area";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
+
+// 저장소 데이터 상태 인터페이스
+interface RepositoryDataState {
+  [key: string]: {
+    loading: boolean;
+    hasData: boolean;
+  }
+}
 
 export function AccountsTab() {
   const {
@@ -38,6 +47,10 @@ export function AccountsTab() {
   const [showRepositoryDialog, setShowRepositoryDialog] = useState(false);
   const [currentAccount, setCurrentAccount] = useState<Account | undefined>(undefined);
   const [currentRepository, setCurrentRepository] = useState<Repository | undefined>(undefined);
+
+  // 저장소 데이터 상태 관리
+  const [repoDataState, setRepoDataState] = useState<RepositoryDataState>({});
+  const [loadingWithoutData, setLoadingWithoutData] = useState(false);
 
   // 계정 저장 핸들러
   const handleSaveAccount = async (accountData: AccountFormData) => {
@@ -206,6 +219,86 @@ export function AccountsTab() {
     console.log('[DEBUG] AccountsTab - error 상태:', error);
   }, [settings, loading, error]);
 
+  // 데이터가 없는 저장소 목록 조회
+  const loadRepositoriesWithoutData = async () => {
+    try {
+      setLoadingWithoutData(true);
+      const response = await fetch('/api/settings/repositories/without-data');
+      const data = await response.json();
+      
+      if (data.success && data.repositories) {
+        const newState: RepositoryDataState = {};
+        
+        // 모든 저장소는 기본적으로 데이터를 가지고 있다고 가정
+        if (settings?.repositories) {
+          settings.repositories.forEach(repo => {
+            newState[repo.id] = { loading: false, hasData: true };
+          });
+        }
+        
+        // 데이터가 없는 저장소 상태 업데이트
+        data.repositories.forEach((repo: any) => {
+          newState[repo.id] = { loading: false, hasData: false };
+        });
+        
+        setRepoDataState(newState);
+      }
+    } catch (error) {
+      console.error('데이터가 없는 저장소 목록 조회 중 오류 발생:', error);
+    } finally {
+      setLoadingWithoutData(false);
+    }
+  };
+
+  // 저장소 데이터 동기화 요청
+  const syncRepositoryData = async (repoId: string) => {
+    try {
+      // 로딩 상태 설정
+      setRepoDataState(prev => ({
+        ...prev,
+        [repoId]: { ...prev[repoId], loading: true }
+      }));
+      
+      const response = await fetch(`/api/settings/repositories/${repoId}/sync`, {
+        method: 'POST'
+      });
+      
+      const data = await response.json();
+      
+      if (data.success) {
+        toast.success(`저장소 데이터 수집이 시작되었습니다.`);
+        
+        // 약간의 딜레이 후에 로딩 상태 해제
+        setTimeout(() => {
+          setRepoDataState(prev => ({
+            ...prev,
+            [repoId]: { loading: false, hasData: true }
+          }));
+        }, 2000);
+      } else {
+        toast.error(`데이터 수집 실패: ${data.message}`);
+        setRepoDataState(prev => ({
+          ...prev,
+          [repoId]: { ...prev[repoId], loading: false }
+        }));
+      }
+    } catch (error) {
+      console.error('저장소 데이터 동기화 중 오류 발생:', error);
+      toast.error('저장소 데이터 동기화 중 오류가 발생했습니다.');
+      setRepoDataState(prev => ({
+        ...prev,
+        [repoId]: { ...prev[repoId], loading: false }
+      }));
+    }
+  };
+
+  // 설정이 변경될 때마다 데이터가 없는 저장소 목록 조회
+  useEffect(() => {
+    if (settings && settings.repositories && settings.repositories.length > 0) {
+      loadRepositoriesWithoutData();
+    }
+  }, [settings]);
+
   if (loading) {
     console.log('[DEBUG] AccountsTab - 로딩 중 상태 표시');
     return <div className="py-4">계정 정보를 불러오는 중...</div>;
@@ -336,22 +429,38 @@ export function AccountsTab() {
                   {getAccountTypeName(activeTab)}에 연결된 저장소 목록입니다.
                 </CardDescription>
               </div>
-              <Button 
-                onClick={() => {
-                  setCurrentRepository(undefined);
-                  setShowRepositoryDialog(true);
-                }}
-                disabled={filteredAccounts.length === 0}
-              >
-                <Plus className="h-4 w-4 mr-2" />
-                저장소 추가
-              </Button>
+              <div className="flex gap-2">
+                <Button 
+                  variant="outline"
+                  onClick={loadRepositoriesWithoutData}
+                  disabled={loadingWithoutData}
+                >
+                  {loadingWithoutData ? (
+                    <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                  ) : (
+                    <RefreshCw className="h-4 w-4 mr-2" />
+                  )}
+                  상태 확인
+                </Button>
+                <Button 
+                  onClick={() => {
+                    setCurrentRepository(undefined);
+                    setShowRepositoryDialog(true);
+                  }}
+                  disabled={filteredAccounts.length === 0}
+                >
+                  <Plus className="h-4 w-4 mr-2" />
+                  저장소 추가
+                </Button>
+              </div>
             </CardHeader>
             <CardContent>
               {filteredRepositories.length > 0 ? (
                 <div className="space-y-4">
                   {filteredRepositories.map(repository => {
                     const account = getAccountById(repository.owner, repository.type);
+                    const repoState = repoDataState[repository.id] || { loading: false, hasData: true };
+                    
                     return (
                       <div key={repository.id} className="border rounded-md p-4">
                         <div className="flex justify-between items-start">
@@ -366,9 +475,39 @@ export function AccountsTab() {
                                   {account.username}
                                 </Badge>
                               )}
+                              <TooltipProvider>
+                                <Tooltip>
+                                  <TooltipTrigger asChild>
+                                    <Badge 
+                                      variant={repoState.hasData ? "default" : "destructive"} 
+                                      className="text-xs"
+                                    >
+                                      {repoState.hasData ? "데이터 있음" : "데이터 없음"}
+                                    </Badge>
+                                  </TooltipTrigger>
+                                  <TooltipContent>
+                                    {repoState.hasData 
+                                      ? "이 저장소의 커밋, PR 데이터가 수집되어 있습니다."
+                                      : "이 저장소의 데이터가 수집되지 않았습니다. 동기화 버튼을 클릭하여 데이터를 수집하세요."}
+                                  </TooltipContent>
+                                </Tooltip>
+                              </TooltipProvider>
                             </div>
                           </div>
                           <div className="flex gap-2">
+                            <Button 
+                              variant="outline" 
+                              size="sm"
+                              onClick={() => syncRepositoryData(repository.id.toString())}
+                              disabled={repoState.loading}
+                            >
+                              {repoState.loading ? (
+                                <Loader2 className="h-4 w-4 mr-1 animate-spin" />
+                              ) : (
+                                <Database className="h-4 w-4 mr-1" />
+                              )}
+                              {repoState.loading ? "동기화 중..." : "데이터 동기화"}
+                            </Button>
                             <Button 
                               variant="outline" 
                               size="sm"

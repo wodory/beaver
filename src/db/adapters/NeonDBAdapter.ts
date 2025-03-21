@@ -28,21 +28,26 @@ export class NeonDBAdapter implements IDatabaseAdapter {
    */
   async initialize(): Promise<void> {
     try {
-      // Neon DB는 서버리스이므로 SSL 필요
+      // Neon DB는 서버리스이므로, 공식 권장 설정 사용
       this.poolClient = postgres(this.connectionString, {
-        ssl: 'require',
-        max: 10,           // 연결 풀 크기 (서버리스에 최적화)
-        idle_timeout: 30,  // 유휴 연결 타임아웃 (초)
-        connect_timeout: 10 // 연결 타임아웃 (초)
+        ssl: process.env.NODE_ENV === 'production' 
+          ? { rejectUnauthorized: true } // 프로덕션 환경
+          : { rejectUnauthorized: false }, // 개발 환경
+        max: 1,              // Neon 프리티어 권장 값
+        idle_timeout: 20,    // Neon 권장 값
+        connect_timeout: 30, // 연결 타임아웃 (초)
       });
       
       // Drizzle ORM 초기화
       this.db = drizzle(this.poolClient, { schema });
       
+      // 테스트 쿼리로 연결 확인
+      await this.poolClient`SELECT 1`;
+      
       console.log('Neon DB 연결 성공');
     } catch (error) {
       console.error('Neon DB 연결 오류:', error);
-      throw new Error('데이터베이스 연결에 실패했습니다.');
+      throw new Error(`데이터베이스 연결에 실패했습니다: ${error instanceof Error ? error.message : String(error)}`);
     }
   }
 

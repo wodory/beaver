@@ -7,9 +7,9 @@ import { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 import { getDB } from '../../db/index.js';
 import { schemaToUse as schema } from '../../db/index.js';
 // 메트릭스 계산 함수 임포트
-import { calculateMetrics } from '../../lib/metrics.js';
+import { calculateMetrics as importedCalculateMetrics } from '../../lib/metrics.js';
 import { format, subDays } from 'date-fns';
-import { eq, and, gte, lte, sql } from 'drizzle-orm';
+import { eq, and, gte, lte/* , sql */ } from 'drizzle-orm';
 // GitHub API 타입 임포트
 import type { PullRequest, Review as GithubReview, Commit as GithubCommit } from '../../api/github';
 import type { DeploymentEvent, MetricsResult } from '../../types/github';
@@ -167,7 +167,7 @@ function generateProjectMetrics(projectId: string, startDate: Date, endDate: Dat
 /**
  * 개발자 메트릭스 생성 (현재는 테스트 데이터)
  */
-function generateDeveloperMetrics(developerId: string, startDate: Date, endDate: Date) {
+/* function generateDeveloperMetrics(developerId: string, startDate: Date, endDate: Date) {
   // 개발자 ID에 따라 약간 다른 데이터 반환
   const devSeed = parseInt(developerId) || developerId.length;
   
@@ -231,12 +231,12 @@ function generateDeveloperMetrics(developerId: string, startDate: Date, endDate:
     endDate: endDate.toISOString(),
     dailyMetrics // 일별 메트릭스
   };
-}
+} */
 
 /**
  * 팀 메트릭스 생성 (현재는 테스트 데이터)
  */
-function generateTeamMetrics(teamId: string, startDate: Date, endDate: Date) {
+/* function generateTeamMetrics(teamId: string, startDate: Date, endDate: Date) {
   // 팀 ID에 따라 약간 다른 데이터 반환
   const teamMultiplier = parseInt(teamId.replace('team', '')) || 1;
   
@@ -291,22 +291,22 @@ function generateTeamMetrics(teamId: string, startDate: Date, endDate: Date) {
   };
   
   return teamData;
-}
+} */
 
 /**
  * 팀 ID로 팀 이름 조회
  */
-function getTeamNameById(teamId: string): string {
-  const teamNames: Record<string, string> = {
-    'team1': '프론트엔드 팀',
-    'team2': '백엔드 팀',
-    'team3': '인프라 팀',
-    'team4': 'QA 팀',
-    'team5': '모바일 팀',
-  };
+// function getTeamNameById(teamId: string): string {
+//   const teamNames: Record<string, string> = {
+//     'team1': '프론트엔드 팀',
+//     'team2': '백엔드 팀',
+//     'team3': '인프라 팀',
+//     'team4': 'QA 팀',
+//     'team5': '모바일 팀',
+//   };
   
-  return teamNames[teamId] || `팀 ${teamId}`;
-}
+//   return teamNames[teamId] || `팀 ${teamId}`;
+// }
 
 /**
  * 메트릭스 라우트 등록
@@ -563,7 +563,7 @@ export async function metricsRoutes(fastify: FastifyInstance) {
             console.log(`배포 데이터 조회 완료: ${deployments.length}개`);
             
             // 4. 메트릭스 계산
-            const metrics = calculateMetrics(pullRequests, prDetails, deployments) as MetricsResult & { 
+            const metrics = importedCalculateMetrics(pullRequests, prDetails, deployments) as MetricsResult & { 
               repositoryId?: string;
               name?: string;
               fullName?: string;
@@ -793,7 +793,7 @@ export async function metricsRoutes(fastify: FastifyInstance) {
         console.log(`팀 메트릭스 계산 시작: ${team.name}, 멤버 수: ${teamMembers.length}`);
         
         // 팀 멤버별 메트릭스 계산
-        const memberMetricsPromises = teamMembers.map(member => 
+        const memberMetricsPromises = teamMembers.map((member: any) => 
           calculateDeveloperMetricsFromApi(member.users, startDate, endDate)
         );
         
@@ -870,61 +870,61 @@ export async function metricsRoutes(fastify: FastifyInstance) {
 /**
  * 커밋 타입 정의
  */
-interface CommitType {
+/* interface CommitType {
   id: number;
   authorId: number;
   committedAt: Date;
   additions: number;
   deletions: number;
-}
+} */
 
 /**
  * PR 타입 정의
  */
-interface PullRequestType {
+/* interface PullRequestType {
   id: number;
   authorId: number;
   createdAt: Date;
   mergedAt: Date | null;
-}
+} */
 
 /**
  * 리뷰 타입 정의
  */
-interface ReviewType {
+/* interface ReviewType {
   id: number;
   reviewerId: number;
   submittedAt: Date;
-}
+} */
 
 /**
  * 사용자 타입 정의
  */
-interface UserType {
+/* interface UserType {
   id: number;
   login: string;
   name: string | null;
   avatarUrl: string | null;
-}
+} */
 
 /**
  * 팀 타입 정의
  */
-interface TeamType {
+/* interface TeamType {
   id: number;
   name: string;
   avatarUrl: string | null;
   description: string | null;
-}
+} */
 
 /**
  * 팀 멤버 타입 정의
  */
-interface TeamMemberType {
+/* interface TeamMemberType {
   teamId: number;
   userId: number;
   users: UserType;
-}
+} */
 
 /**
  * GitHub API 클라이언트 생성
@@ -961,7 +961,7 @@ function getGitHubClient(token?: string, baseUrl?: string): Octokit {
 }
 
 /**
- * API에서 개발자 메트릭스 수집 및 계산
+ * 팀 멤버별 메트릭스 계산
  */
 async function calculateDeveloperMetricsFromApi(user: any, startDate: Date, endDate: Date) {
   console.log(`개발자 메트릭스 계산 시작: ${user.login || user.id}`);
@@ -1087,7 +1087,7 @@ async function calculateDeveloperMetricsFromApi(user: any, startDate: Date, endD
     const prDays = dailyMetrics.filter(day => day.prCount > 0).length;
     
     // 머지된 PR 수 계산
-    const mergedPrCount = pullRequests.filter(pr => pr.merged_at).length;
+    const mergedPrCount = pullRequests.filter((pr: any) => pr.merged_at).length;
     
     return {
       userId: user.id.toString(),
@@ -1230,7 +1230,7 @@ async function calculateProjectMetricsFromApi(repository: any, startDate: Date, 
     });
     
     // startDate ~ endDate 사이에 생성된 PR만 필터링
-    pullRequests = prResponse.data.filter(pr => {
+    pullRequests = prResponse.data.filter((pr: any) => {
       const createdAt = new Date(pr.created_at);
       return createdAt >= startDate && createdAt <= endDate;
     }) as PullRequest[];
@@ -1356,8 +1356,8 @@ async function calculateProjectMetricsFromApi(repository: any, startDate: Date, 
   const avgPRCycleTime = prWithMergeTime > 0 ? totalPrCycleTime / prWithMergeTime : 0;
   
   // 변경 실패율 계산 (닫힌 PR 중 병합되지 않은 비율)
-  const closedPRs = pullRequests.filter(pr => pr.state === 'closed');
-  const notMergedPRs = closedPRs.filter(pr => !pr.merged_at);
+  const closedPRs = pullRequests.filter((pr: any) => pr.state === 'closed');
+  const notMergedPRs = closedPRs.filter((pr: any) => !pr.merged_at);
   const changeFailureRate = closedPRs.length > 0 ? notMergedPRs.length / closedPRs.length : 0;
   
   // 평균 리뷰 및 병합 시간 계산
@@ -1435,11 +1435,11 @@ async function calculateProjectMetricsFromApi(repository: any, startDate: Date, 
 /**
  * PR, 리뷰 및 배포 데이터를 기반으로 메트릭스 계산
  */
-function calculateMetrics(
+/* function calculateMetrics(
   pullRequests: PullRequest[],
   prDetails: Record<number, { reviews: GithubReview[], commits: GithubCommit[] }>,
   deployments: DeploymentEvent[]
-): MetricsResult {
+): any {
   // 일별 메트릭스 초기화
   const dailyMetrics: any[] = [];
   
@@ -1463,8 +1463,9 @@ function calculateMetrics(
     }
   });
   allCommits.forEach(commit => {
-    if (commit.author?.login) {
-      contributors.add(commit.author.login);
+    const authorCommit = commit as any; // 타입 캐스팅
+    if (authorCommit.author?.login) {
+      contributors.add(authorCommit.author.login);
     }
   });
   
@@ -1512,14 +1513,14 @@ function calculateMetrics(
     if (reviews.length > 0) {
       // 제출 시간을 기준으로 리뷰 정렬
       reviews.sort((a, b) => {
-        const aDate = new Date(a.submittedAt || 0).getTime();
-        const bDate = new Date(b.submittedAt || 0).getTime();
+        const aDate = new Date(a.submitted_at || 0).getTime();
+        const bDate = new Date(b.submitted_at || 0).getTime();
         return aDate - bDate;
       });
       
       // 가장 빠른 리뷰와 PR 생성 시간의 차이 계산
       const createdAt = new Date(pr.created_at).getTime();
-      const firstReviewTime = new Date(reviews[0].submittedAt || 0).getTime();
+      const firstReviewTime = new Date(reviews[0].submitted_at || 0).getTime();
       const timeToFirstReview = (firstReviewTime - createdAt) / (1000 * 60); // 분 단위
       
       if (timeToFirstReview > 0) {
@@ -1559,7 +1560,7 @@ function calculateMetrics(
     changeFailureRate,
     dailyMetrics
   };
-}
+} */
 
 /**
  * 팀 일별 메트릭스 계산

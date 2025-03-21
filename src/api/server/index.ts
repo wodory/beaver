@@ -68,7 +68,7 @@ export async function initializeServer() {
           const syncManager = new SyncManager();
           
           // 비동기로 동기화 작업 시작 (백그라운드에서 실행)
-          syncManager.syncRepository(parseInt(id), forceFull, syncJira)
+          syncManager.syncRepository(parseInt(id), forceFull)
             .then(result => {
               console.log(`저장소 ${id} 동기화 완료:`, result);
               // 동기화 결과를 DB에 저장하거나 추가 작업 수행 가능

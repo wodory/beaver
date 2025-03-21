@@ -43,9 +43,12 @@ export async function initializeDatabase(): Promise<void> {
     
     // Neon DB 연결을 위한 SSL 설정
     queryClient = postgres(DB_CONNECTION, { 
-      ssl: 'require',
-      max: 10, // 연결 풀 최대 크기
-      idle_timeout: 30 // 유휴 연결 타임아웃 (초)
+      ssl: process.env.NODE_ENV === 'production' 
+        ? { rejectUnauthorized: true } // 프로덕션 환경
+        : { rejectUnauthorized: false }, // 개발 환경
+      max: 1, // Neon 프리티어 권장 값
+      idle_timeout: 20, // Neon 권장 값
+      connect_timeout: 30 // 연결 타임아웃 (초)
     });
     
     db = drizzle(queryClient, { schema });
