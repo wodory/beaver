@@ -12,6 +12,7 @@ import { logger } from '../../utils/logger.js';
 // import { JiraDataCollector, JiraCollectorSettings } from '../jira/JiraDataCollector';
 // import { JiraIssue } from '../jira/IJiraAdapter';
 import { SettingsService } from '../../api/server/settings-service.js';
+import { GitHubDataCollector } from './services/github/GitHubDataCollector.js';
 
 /**
  * 시스템 설정 인터페이스
@@ -268,11 +269,10 @@ export class SyncManager {
   /**
    * 저장소를 동기화합니다.
    * @param repoId 저장소 ID
-   * @param forceFull 전체 동기화 여부 (증분 동기화 무시)
-   * @param syncJira JIRA 이슈 동기화 여부
+   * @param forceFull 전체 동기화 여부 (true: 전체 동기화, false: 마지막 동기화 시점 이후만 동기화)
    * @returns 동기화 결과
    */
-  async syncRepository(repoId: number, forceFull: boolean = false, syncJira: boolean = false): Promise<SyncResult> {
+  async syncRepository(repoId: number, forceFull: boolean = false): Promise<SyncResult> {
     const startTime = new Date();
     const result: SyncResult = {
       repositoryId: repoId,
@@ -289,162 +289,101 @@ export class SyncManager {
     };
     
     try {
+      // 1. 저장소 정보 조회
       const repoInfo = await this.getRepository(repoId);
       if (!repoInfo) {
-        result.message = `ID가 ${repoId}인 저장소를 찾을 수 없습니다.`;
-        result.endTime = new Date();
+        result.message = `저장소 ID ${repoId}를 찾을 수 없습니다.`;
         return result;
       }
       
-      result.repositoryName = repoInfo.fullName;
-      logger.info(`저장소 동기화 시작: ${repoInfo.fullName}`);
+      result.repositoryName = repoInfo.name;
+      logger.info(`저장소 [${repoInfo.fullName}] 동기화 시작`);
       
-      // 동기화 기준 시간 설정 (마지막 동기화 시간 또는 전체 동기화)
-      let since: Date | undefined = undefined;
-      if (!forceFull && repoInfo.lastSyncAt) {
-        since = new Date(repoInfo.lastSyncAt);
-        logger.info(`마지막 동기화 시간으로부터 증분 동기화: ${since.toISOString()}`);
-      } else {
-        logger.info('전체 동기화 수행 중...');
-      }
+      // 2. 저장소 설정 조회 (API 토큰 등)
+      const repoSettings = await this.settingsService.getRepositorySettings(repoId);
+      const apiToken = repoSettings?.apiToken || '';
       
-      // 저장소 경로 확보
-      const repoPath = await this.ensureRepositoryPath(repoInfo);
-      if (!repoPath) {
-        throw new Error(`저장소 경로를 생성할 수 없습니다: ${repoInfo.fullName}`);
-      }
+      // 3. GraphQL 컬렉터 초기화
+      const collector = new GitHubDataCollector(
+        repoId,
+        apiToken,
+        repoSettings?.apiUrl
+      );
       
-      // 커밋 데이터 수집
-      try {
-        result.commitCount = await this.commitCollector.collectAndStoreCommits(
-          repoInfo,
-          since
-        );
-      } catch (error) {
-        const errorMessage = `커밋 데이터 수집 중 오류: ${error}`;
-        logger.error(errorMessage);
-        result.errors.push(errorMessage);
-      }
+      // 4. 커밋 데이터 수집
+      logger.info(`저장소 [${repoInfo.fullName}] 커밋 수집 시작`);
+      const commitCount = await collector.collectCommits();
+      result.commitCount = commitCount;
+      logger.info(`저장소 [${repoInfo.fullName}] ${commitCount}개의 커밋 수집 완료`);
       
-      // GitHub API를 통한 PR 및 리뷰 데이터 수집
-      try {
-        // owner/repo 형식에서 추출
-        const [owner, repo] = repoInfo.fullName.split('/');
-        
-        if (owner && repo) {
-          // PR 데이터 수집
-          const pullRequests = await this.githubApiCollector.collectPullRequests(owner, repo, since);
-          
-          // PR 데이터 저장
-          result.pullRequestCount = await this.storePullRequests(repoInfo, pullRequests);
-          
-          // PR 리뷰 데이터 수집 및 저장
-          let totalReviews = 0;
-          for (const pr of pullRequests) {
-            try {
-              const reviews = await this.githubApiCollector.collectPRReviews(owner, repo, pr.number);
-              const reviewCount = await this.storePullRequestReviews(repoInfo, pr.number, reviews);
-              totalReviews += reviewCount;
-            } catch (error) {
-              const errorMessage = `PR #${pr.number} 리뷰 데이터 수집 중 오류: ${error}`;
-              logger.error(errorMessage);
-              result.errors.push(errorMessage);
-            }
-          }
-          
-          result.reviewCount = totalReviews;
-        } else {
-          const errorMessage = `저장소 이름 형식이 잘못되었습니다: ${repoInfo.fullName}`;
-          logger.error(errorMessage);
-          result.errors.push(errorMessage);
-        }
-      } catch (error) {
-        const errorMessage = `GitHub API 데이터 수집 중 오류: ${error}`;
-        logger.error(errorMessage);
-        result.errors.push(errorMessage);
-      }
+      // 5. 마지막 동기화 시간 업데이트
+      await collector.updateLastSyncAt();
       
-      // Jira 이슈 동기화 부분 주석 처리
-      /*
-      // JIRA 이슈 동기화 (요청 시)
-      if (syncJira) {
-        try {
-          // JIRA 이슈 데이터 수집
-          const issues = await this.jiraDataCollector.getIssues(since);
-          
-          // 이슈 데이터 저장
-          result.jiraIssueCount = await this.storeJiraIssues(issues);
-        } catch (error) {
-          const errorMessage = `JIRA 이슈 데이터 수집 중 오류: ${error}`;
-          logger.error(errorMessage);
-          result.errors.push(errorMessage);
-        }
-      }
-      */
-      
-      // TypeScript 경고 해결을 위해 syncJira 사용
-      if (syncJira) {
-        logger.info('JIRA 동기화 기능은 현재 비활성화되어 있습니다.');
-      }
-      
-      // 마지막 동기화 시간 업데이트
-      await getDB().update(schema.repositories)
-        .set({ lastSyncAt: new Date() })
-        .where(eq(schema.repositories.id, repoId));
-      
+      // 6. 결과 설정
       result.success = true;
-      result.message = '저장소 동기화가 완료되었습니다.';
+      result.message = `저장소 [${repoInfo.fullName}] 동기화 완료: ${commitCount}개의 커밋 수집됨`;
     } catch (error) {
-      const errorMessage = `저장소 동기화 중 오류 발생: ${error}`;
-      logger.error(errorMessage);
+      const errorMessage = error instanceof Error ? error.message : String(error);
       result.success = false;
-      result.message = errorMessage;
+      result.message = `저장소 동기화 실패: ${errorMessage}`;
       result.errors.push(errorMessage);
+      logger.error(`저장소 ID ${repoId} 동기화 중 오류 발생:`, error);
+    } finally {
+      result.endTime = new Date();
     }
     
-    result.endTime = new Date();
     return result;
   }
   
   /**
    * 모든 저장소를 동기화합니다.
    * 
-   * @param forceFull 전체 동기화 여부 (기본값: false)
-   * @param syncJira JIRA 이슈 동기화 여부 (기본값: false)
-   * @returns 동기화 결과 목록
+   * @param forceFull 전체 동기화 여부
+   * @returns 각 저장소의 동기화 결과 배열
    */
-  async syncAllRepositories(forceFull: boolean = false, syncJira: boolean = false): Promise<SyncResult[]> {
-    const repositories = await this.getAllRepositories();
-    const results: SyncResult[] = [];
-    
-    // TypeScript 경고 해결을 위해 syncJira 사용
-    if (syncJira) {
-      logger.info('JIRA 동기화 기능은 모든 저장소에 대해 비활성화되어 있습니다.');
-    }
-    
-    for (const repo of repositories) {
-      try {
-        const result = await this.syncRepository(repo.id, forceFull, syncJira);
-        results.push(result);
-      } catch (error) {
-        logger.error(`저장소 ${repo.fullName} 동기화 중 오류 발생:`, error);
-        results.push({
-          repositoryId: repo.id,
-          repositoryName: repo.fullName,
-          success: false,
-          message: `동기화 중 오류 발생: ${error}`,
-          commitCount: 0,
-          pullRequestCount: 0,
-          reviewCount: 0,
-          jiraIssueCount: 0,
-          startTime: new Date(),
-          endTime: new Date(),
-          errors: [`${error}`]
-        });
+  async syncAllRepositories(forceFull: boolean = false): Promise<SyncResult[]> {
+    try {
+      // 모든 저장소 정보 조회
+      const repositories = await this.getAllRepositories();
+      
+      if (repositories.length === 0) {
+        logger.warn('동기화할 저장소가 없습니다.');
+        return [];
       }
+      
+      logger.info(`총 ${repositories.length}개 저장소 동기화 시작`);
+      
+      // 각 저장소 동기화
+      const results: SyncResult[] = [];
+      for (const repo of repositories) {
+        try {
+          const result = await this.syncRepository(repo.id, forceFull);
+          results.push(result);
+        } catch (error) {
+          // 한 저장소 실패해도 다음 저장소 계속 진행
+          logger.error(`저장소 ${repo.fullName} 동기화 중 오류 발생:`, error);
+          results.push({
+            repositoryId: repo.id,
+            repositoryName: repo.name,
+            success: false,
+            message: `동기화 중 오류 발생: ${error instanceof Error ? error.message : String(error)}`,
+            commitCount: 0,
+            pullRequestCount: 0,
+            reviewCount: 0,
+            jiraIssueCount: 0,
+            startTime: new Date(),
+            endTime: new Date(),
+            errors: [error instanceof Error ? error.message : String(error)]
+          });
+        }
+      }
+      
+      logger.info(`${repositories.length}개 저장소 동기화 완료`);
+      return results;
+    } catch (error) {
+      logger.error('저장소 동기화 중 오류 발생:', error);
+      throw error;
     }
-    
-    return results;
   }
   
   /**

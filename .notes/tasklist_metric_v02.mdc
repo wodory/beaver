@@ -152,64 +152,25 @@ alwaysApply: false
 
 ## Phase 2: 데이터 수집 모듈 개발 (2주)
 
-### Task 2.1: Git 기반 커밋 데이터 수집기 구현  
-- **목표**: 로컬 Git 저장소를 대상으로 **커밋 데이터를 추출**하고 DB에 저장  
+### Task 2.1: GitHub API - 커밋 데이터 수집기
+- **목표**: GitHub API (GraphQL 또는 REST)로 **커밋 데이터를 추출**하고 DB에 저장  
 - **상세 내용**:  
-  - **Git 로그 파싱**: `simple-git`을 이용하여 지정된 저장소 경로의 Git 커밋 로그를 읽어와 커밋 목록을 획득  
+  - **Git 로그 수집**: GitHub 저장소의 GraphQL API로 커밋 로그를 읽어와 커밋 목록을 획득  
     - 옵션 설정으로 `--since` 파라미터를 사용해 **마지막 동기화 시점 이후**의 커밋만 수집 (증분 수집)  
     - `--numstat` 옵션을 사용하여 커밋별 **코드 변경량(추가/삭제)** 정보 함께 가져오기  
   - **중복 처리**: 각 커밋 SHA를 기본 키로 사용하여 **이미 수집된 커밋인지 확인**. DB에 존재하는 커밋은 건너뛰고 새로운 커밋만 처리  
   - **작성자 정보 저장**: 커밋 작성자의 이름, 이메일로 **사용자 식별**. 사용자 테이블에 해당 사용자가 없으면 새로 추가하고, 있으면 기존 사용자 ID 참조  
   - **DB 저장**: 커밋 정보를 `commits` 테이블에 삽입 (SHA, 작성자/커미터 ID, 메시지, 타임스탬프, 추가/삭제 줄 수 등)  
-    ```typescript
-    // src/services/git-collector.ts (일부 발췌)
-    export class GitCommitCollector {
-      async collectCommits(repoId: number, repoPath: string, since?: Date, branches?: string[]) {
-        // ... (SimpleGit 초기화 및 브랜치 결정 로직)
-        for (const branch of branches) {
-          const logs = await git.log([...]);  // 해당 브랜치의 커밋 로그
-          for (const commit of logs.all) {
-            // 이미 DB에 있는 커밋은 건너뛰기
-            const existingCommit = await db.select().from(commits)
-              .where(eq(commits.id, commit.hash))
-              .get();
-            if (existingCommit) continue;
-            
-            // 작성자 정보 처리 (없으면 사용자 추가)
-            const author = await this.getOrCreateUser(commit.author_name, commit.author_email);
-            
-            // 변경 통계 파싱
-            const stats = { additions: 0, deletions: 0 };
-            for (const numStat of commit.diff?.numstat || []) {
-              stats.additions += parseInt(numStat.additions) || 0;
-              stats.deletions += parseInt(numStat.deletions) || 0;
-            }
-            
-            // 커밋 정보를 DB에 저장
-            await db.insert(commits).values({
-              id: commit.hash,
-              repositoryId: repoId,
-              authorId: author.id,
-              message: commit.message,
-              committedAt: new Date(commit.date),
-              additions: stats.additions,
-              deletions: stats.deletions
-            });
-          }
-        }
-      }
-    }
-    ```  
   - **오류 처리 및 로깅**: 수집 중 발생하는 오류를 로그로 기록하고 다음 커밋으로 진행 (한 커밋 실패가 전체 중단되지 않도록)  
   - **성과 지표 필드**: 커밋에 대한 라인 추가/삭제 정보(`additions`, `deletions`)를 저장함으로써 향후 **코드 변경량(LOC)** 지표 계산에 활용  
 
-### Task 2.2: GitHub API 연동 모듈 구현  
+### Task 2.2: GitHub API - PR 데이터 수집기  
 - **목표**: **GitHub API (GraphQL 또는 REST)**를 사용하여 Pull Request(PR) 및 리뷰 데이터를 수집하고 데이터베이스에 저장  
 - **상세 내용**:  
-  - **Octokit 설정**: GitHub의 REST/GraphQL API 호출을 위해 Octokit 라이브러리 초기화 및 **인증 토큰** 설정 (.env의 `GITHUB_TOKEN` 사용)  
+  - **Octokit 설정**: GitHub의 REST/GraphQL API 호출을 위해 Octokit 라이브러리 초기화 및 **인증 토큰** 설정 (DB의 setting 테이블 > accotuns 사용)  
   - **PR 데이터 수집**: 대상 저장소의 **Pull Request 목록**을 불러와 각 PR의 주요 정보 저장  
     - 예: PR 번호, 제목, 작성자, 생성일시, 병합일시(또는 닫힌 일시), 상태(open/merged/closed), 변경된 코드 라인 수 등을 `pullRequests` 테이블에 저장  
-    - **그래프QL 활용**: 필요한 경우 GraphQL로 PR과 연관된 리뷰, 커밋 수를 한 번에 조회하여 API 호출 횟수 최적화  
+    - **그래프QL 활용**: 가능하면 최대한 GraphQL로 PR과 연관된 리뷰, 커밋 수를 한 번에 조회하여 API 호출 횟수 최적화  
   - **리뷰 데이터 수집**: 각 PR에 달린 **코드 리뷰(review)** 정보 수집  
     - PR에 대한 리뷰어, 리뷰 제출 시간, 리뷰 상태(승인/요청 변경 등)를 가져와 `prReviews` 테이블에 저장  
     - 리뷰 응답 시간 계산을 위해 **PR 생성 시간과 첫 승인 리뷰 시간** 등을 확보  
@@ -220,11 +181,9 @@ alwaysApply: false
 ### Task 2.3: 증분 동기화 및 통합 수집 관리  
 - **목표**: **증분 데이터 수집** 및 여러 종류의 데이터를 일괄 동기화하는 관리자 모듈 구현  
 - **상세 내용**:  
-  - **Sync Manager 설계**: 커밋 수집기(Git)와 PR/리뷰 수집기(GitHub API)를 **통합**하여 단일 진입점에서 저장소 데이터를 동기화하는 `SyncManager` 클래스 구현  
+  - **Sync Manager 설계**: 커밋 수집기와 PR/리뷰 수집기(GitHub API)를 **통합**하여 단일 진입점에서 저장소 데이터를 동기화하는 `SyncManager` 클래스 구현  
   - **최신 동기화 시점 관리**: `repositories.lastSyncAt` 값을 활용하여 각 저장소별 **마지막 동기화 이후** 추가된 커밋과 PR만 가져오도록 수집기 호출  
-    - 커밋 수집: `GitCommitCollector.collectCommits(repoId, path, since=lastSyncAt)`  
-    - PR 수집: GitHub API 호출 시 `updated_at > lastSyncAt` 조건 또는 GraphQL `since` 필터 활용  
-  - **동기화 단계**: 저장소 단위로 (1) RepositoryManager 통해 **최신 코드 받기** → (2) GitCommitCollector로 **커밋 수집** → (3) GitHub API로 **PR 및 리뷰 수집** 순으로 실행  
+  - **동기화 단계**: 저장소 단위로 **커밋 수집** + **PR 및 리뷰 수집** 순으로 실행  
   - **일괄 처리**: 여러 저장소를 순차 또는 병렬로 처리하여 전체 프로젝트의 데이터를 업데이트하고, 프로세스 **진행 상황을 로깅**  
   - **에러 격리**: 특정 저장소 동기화 중 에러 발생 시 해당 저장소만 스킵하고 다음 대상으로 진행, 전반적인 동기화 작업은 지속  
   - **마지막 동기화 시간 갱신**: 모든 수집이 끝나면 `repositories.lastSyncAt`를 현재 시각으로 업데이트하여 다음 증분 수집에 활용  

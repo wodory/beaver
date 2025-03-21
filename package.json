@@ -33,6 +33,7 @@
     "test:metrics": "tsx src/tests/metrics-test.ts",
     "test:worker": "tsx src/tests/worker-manager-test.ts",
     "test:timeline-chart": "tsx src/tests/timeline-chart-test.tsx",
+    "test:github-graphql": "tsx src/scripts/test-github-collector.ts",
     "init-db": "node src/scripts/init-db.cjs",
     "check-db": "node src/scripts/check-db.cjs",
     "init-settings": "node src/scripts/init-settings-db.cjs",
