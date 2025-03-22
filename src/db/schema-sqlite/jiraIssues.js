@@ -1,4 +1,4 @@
-import { sqliteTable, integer, text } from 'drizzle-orm/sqlite-core';
+import { sqliteTable, text, integer, primaryKey } from 'drizzle-orm/sqlite-core';
 import { sql } from 'drizzle-orm';
 
 /**
@@ -10,20 +10,24 @@ export const jiraIssues = sqliteTable('jira_issues', {
     // 식별자
     id: integer('id').primaryKey({ autoIncrement: true }),
     // 저장소 외래 키
-    repositoryId: integer('repository_id').notNull(),
+    repositoryId: integer('repository_id'),
     // JIRA 이슈 키 (프로젝트 키 + 번호, 예: 'PROJ-123')
-    key: text('key').notNull().unique(),
+    key: text('key').notNull(),
     // 기본 정보
     summary: text('summary').notNull(),
     description: text('description'),
-    status: text('status').notNull(),
+    status: text('status'),
     issueType: text('issue_type'),
     // 담당자 정보
     assignee: text('assignee'),
     reporter: text('reporter'),
     // 이슈 날짜 정보
-    createdAt: text('created_at').default(sql`CURRENT_TIMESTAMP`),
-    updatedAt: text('updated_at').default(sql`CURRENT_TIMESTAMP`),
+    created: integer('created', { mode: 'timestamp' }),
+    updated: integer('updated', { mode: 'timestamp' }),
+    projectKey: text('project_key'),
+    projectName: text('project_name'),
+    createdAt: integer('created_at', { mode: 'timestamp' }).defaultNow(),
+    updatedAt: integer('updated_at', { mode: 'timestamp' }).defaultNow(),
     resolvedAt: text('resolved_at'),
     // 추가 메타데이터
     priority: text('priority'),

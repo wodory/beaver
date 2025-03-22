@@ -7,15 +7,17 @@ import { drizzle } from 'drizzle-orm/postgres-js';
 import { migrate } from 'drizzle-orm/postgres-js/migrator';
 import postgres from 'postgres';
 import * as schema from '../schema/index.js';
+import { IDatabaseAdapter } from './IDatabaseAdapter.js';
 /**
  * Neon DB 어댑터 클래스
  */
-export class NeonDBAdapter {
+export class NeonDBAdapter extends IDatabaseAdapter {
     /**
      * Neon DB 어댑터를 초기화합니다.
      * @param connectionString Neon DB 연결 문자열
      */
     constructor(connectionString) {
+        super();
         this.connectionString = connectionString;
         this.poolClient = null;
         this.db = null;
@@ -59,16 +61,48 @@ export class NeonDBAdapter {
         if (!this.db) {
             throw new Error('데이터베이스가 초기화되지 않았습니다.');
         }
-        // 직접 SQL 실행인 경우
-        if (typeof query === 'object' && query.text) {
-            const { text, values } = query;
-            if (!this.poolClient) {
-                throw new Error('데이터베이스 클라이언트가 초기화되지 않았습니다.');
-            }
-            return await this.poolClient.unsafe(text, values);
+        if (!this.poolClient) {
+            throw new Error('데이터베이스 클라이언트가 초기화되지 않았습니다.');
         }
-        // Drizzle 쿼리 객체인 경우
-        return await query.execute();
+        try {
+            // 직접 SQL 실행인 경우 (문자열)
+            if (typeof query === 'string') {
+                return await this.poolClient.unsafe(query);
+            }
+            
+            // 객체형 쿼리에서 text와 values가 있는 경우
+            if (typeof query === 'object' && query.text) {
+                const { text, values } = query;
+                return await this.poolClient.unsafe(text, values || []);
+            }
+            
+            // Drizzle 쿼리 객체인 경우
+            if (query.execute && typeof query.execute === 'function') {
+                return await query.execute();
+            }
+            
+            // 일반 SQL 객체인 경우 (실행 가능한 함수나 프로퍼티가 없는 경우)
+            console.warn('지원되지 않는 쿼리 형식입니다. 직접 SQL 문자열로 변환하여 실행합니다.');
+            return await this.poolClient.unsafe(String(query));
+        } catch (error) {
+            console.error('쿼리 실행 오류:', error);
+            throw error;
+        }
+    }
+    /**
+     * SQL 명령을 직접 실행합니다.
+     */
+    async execute(sql, params = []) {
+        if (!this.poolClient) {
+            throw new Error('데이터베이스가 초기화되지 않았습니다.');
+        }
+        
+        try {
+            return await this.poolClient.unsafe(sql, params);
+        } catch (error) {
+            console.error('SQL 실행 오류:', error);
+            throw error;
+        }
     }
     /**
      * 데이터를 삽입합니다.

@@ -201,6 +201,7 @@ export class GitHubDataCollector {
    */
   async collectCommits(): Promise<number> {
     try {
+      // 저장소 정보 조회
       const { repository } = await this.getRepositoryInfo();
       
       // 기존 DB에서 저장소 정보를 직접 조회하여 lastSyncAt 정보 가져오기
@@ -210,9 +211,9 @@ export class GitHubDataCollector {
       
       const lastSyncAt = repoFromDb?.lastSyncAt || new Date(0);
       
-      logger.info(`커밋 수집 시작: ${this.owner}/${this.repo}, 마지막 동기화: ${lastSyncAt.toISOString()}`);
+      logger.info(`[GitHub] 커밋 수집 시작: ${this.owner}/${this.repo}, 마지막 동기화: ${lastSyncAt.toISOString()}`);
       
-      // 커밋 수집 카운터 초기화
+      // 카운터 초기화
       let newCommitCount = 0;
       let hasNextPage = true;
       let cursor = null;
@@ -220,42 +221,77 @@ export class GitHubDataCollector {
       // 페이지네이션을 통한 모든 커밋 수집
       while (hasNextPage) {
         try {
-          const { commits: commitData, pageInfo } = await this.fetchCommitBatch(
+          logger.debug(`[GitHub] 커밋 배치 조회 중... (커서: ${cursor || '처음'})`);
+          
+          // GraphQL 쿼리 실행
+          const { commits, pageInfo } = await this.fetchCommitBatch(
             this.owner, 
             this.repo, 
             lastSyncAt.toISOString(),
             cursor
           );
           
+          logger.debug(`[GitHub] 커밋 배치 조회 완료: ${commits.length}개 커밋 조회됨`);
+          
           // 수집된 커밋 처리
-          const savedCount = await this.saveCommits(commitData);
-          newCommitCount += savedCount;
+          const batchCount = await this.saveCommits(commits);
+          newCommitCount += batchCount;
           
           // 페이지네이션 정보 업데이트
           hasNextPage = pageInfo.hasNextPage;
           cursor = pageInfo.endCursor;
           
-          logger.info(`커밋 배치 처리 완료: ${savedCount}개 저장, 다음 페이지: ${hasNextPage}`);
+          logger.info(`[GitHub] 커밋 배치 처리 완료: ${batchCount}개 저장됨, 총 ${newCommitCount}개, 다음 페이지: ${hasNextPage}`);
+          
+          // API 레이트 리밋 방지를 위한 딜레이
+          if (hasNextPage) {
+            logger.debug(`[GitHub] API 레이트 리밋 방지를 위해 1초 대기`);
+            await new Promise(resolve => setTimeout(resolve, 1000));
+          }
         } catch (error) {
           // API 호출 에러 처리
-          logger.error(`커밋 배치 처리 중 오류 발생: ${error instanceof Error ? error.message : String(error)}`);
+          const errorMsg = error instanceof Error ? error.message : String(error);
+          logger.error(`[GitHub] 커밋 배치 처리 중 오류 발생: ${errorMsg}`);
+          
+          // 에러가 GraphQL 관련인지 검증
+          if (error instanceof Error && error.message.includes('GraphQL')) {
+            logger.error(`[GitHub] GraphQL 오류 세부 정보:`, error);
+          }
           
           // 레이트 리밋 에러면 전체 동기화 중단
           if (error instanceof Error && 
-              (error.message.includes('rate limit') || 
-              error.message.includes('API rate limit exceeded'))) {
+             (error.message.includes('rate limit') || 
+             error.message.includes('API rate limit exceeded'))) {
+            logger.error(`[GitHub] API 레이트 리밋 초과로 동기화 중단`);
             throw error;
           }
           
-          // 다른 에러의 경우 다음 페이지로 이동
+          // 기타 네트워크 관련 오류 로깅
+          if (error instanceof Error && 
+             (error.message.includes('ECONNREFUSED') || 
+              error.message.includes('ENOTFOUND') ||
+              error.message.includes('ETIMEDOUT'))) {
+            logger.error(`[GitHub] 네트워크 연결 오류: ${error.message}`);
+            throw new Error(`GitHub 서버 연결 오류: ${error.message}. 네트워크 연결 또는 GitHub 서버 가용성을 확인하세요.`);
+          }
+          
+          // 다른 에러의 경우 다음 페이지로 이동 중단
+          logger.warn(`[GitHub] 오류로 인해 다음 페이지 조회를 중단합니다.`);
           hasNextPage = false;
         }
       }
       
-      logger.info(`커밋 수집 완료: 총 ${newCommitCount}개의 새 커밋 수집됨`);
+      logger.info(`[GitHub] 커밋 수집 완료: 총 ${newCommitCount}개의 새 커밋 수집됨`);
       return newCommitCount;
     } catch (error) {
-      logger.error(`커밋 수집 중 오류 발생: ${error instanceof Error ? error.message : String(error)}`);
+      const errorMsg = error instanceof Error ? error.message : String(error);
+      logger.error(`[GitHub] 커밋 수집 중 오류 발생: ${errorMsg}`);
+      
+      // 스택 트레이스 로깅
+      if (error instanceof Error && error.stack) {
+        logger.error(`[GitHub] 오류 스택 트레이스: ${error.stack}`);
+      }
+      
       throw error;
     }
   }
@@ -1097,122 +1133,121 @@ export class GitHubDataCollector {
     // 환경 변수에 따라 적절한 레포지토리 구현체 선택
     let settingsRepo: SettingsRepository;
     let repoInfoRepo: RepositoryInfoRepository;
-
-    if (process.env.DB_TYPE === 'sqlite') {
-      // SQLite 구현체 사용
+    
+    logger.info(`[GitHubDataCollector] 저장소 ID ${repositoryId}에 대한 데이터 수집기 생성 중...`);
+    
+    // Drizzle DB 모듈 임포트
+    const db = await import('../../../../db/index.js');
+    
+    if (db.DB_TYPE === 'sqlite') {
+      logger.info(`[GitHubDataCollector] SQLite DB 사용: ${db.DB_TYPE}`);
+      // 기존 구현체 불러오기
       const { SQLiteAdapter } = await import('../../../../db/adapters/SQLiteAdapter.js');
       const sqliteFilePath = process.env.SQLITE_FILE_PATH || ':memory:';
       const sqliteAdapter = new SQLiteAdapter(sqliteFilePath);
       await sqliteAdapter.initialize();
       
-      // SQLite 레포지토리 구현체 생성
       const { SQLiteSettingsRepository } = await import('../../../../repositories/implementations/SQLiteSettingsRepository.js');
       const { SQLiteRepositoryInfoRepository } = await import('../../../../repositories/implementations/SQLiteRepositoryInfoRepository.js');
       
       settingsRepo = new SQLiteSettingsRepository(sqliteAdapter);
       repoInfoRepo = new SQLiteRepositoryInfoRepository(sqliteAdapter);
-      
-      logger.info(`[GitHub] SQLite DB 사용하여 저장소 ${repositoryId} 데이터 수집기 생성 (파일: ${sqliteFilePath})`);
     } else {
-      // 기본값 - PostgreSQL 구현체 사용
+      logger.info(`[GitHubDataCollector] PostgreSQL DB 사용: ${db.DB_TYPE}`);
+      const { PostgresSettingsRepository } = await import('../../../../repositories/implementations/PostgresSettingsRepository.js');
+      const { PostgresRepositoryInfoRepository } = await import('../../../../repositories/implementations/PostgresRepositoryInfoRepository.js');
+      
       settingsRepo = new PostgresSettingsRepository();
       repoInfoRepo = new PostgresRepositoryInfoRepository();
-      
-      logger.info(`[GitHub] PostgreSQL DB 사용하여 저장소 ${repositoryId} 데이터 수집기 생성`);
     }
     
     try {
       // 저장소 정보 조회
+      logger.info(`[GitHubDataCollector] 저장소 정보 조회 중... (ID: ${repositoryId})`);
       const repository = await repoInfoRepo.findById(repositoryId);
       
       if (!repository) {
-        throw new Error(`저장소 ID ${repositoryId}를 찾을 수 없습니다.`);
+        const errorMsg = `저장소 ID ${repositoryId}를 찾을 수 없습니다.`;
+        logger.error(`[GitHubDataCollector] ${errorMsg}`);
+        throw new Error(errorMsg);
       }
+      
+      logger.info(`[GitHubDataCollector] 저장소 타입: ${repository.type}`);
+      
+      // 저장소 타입에 따른 API 토큰 및 URL 설정
+      let accessToken: string | undefined;
+      let baseUrl: string | undefined = repository.apiUrl;
       
       // 설정 정보 조회 - 리포지토리 사용
       const accountsSettings = await settingsRepo.getSettings('1', 'accounts');
       
       if (!accountsSettings) {
-        throw new Error('계정 설정을 찾을 수 없습니다.');
+        const errorMsg = '계정 설정을 찾을 수 없습니다.';
+        logger.error(`[GitHubDataCollector] ${errorMsg}`);
+        throw new Error(errorMsg);
       }
       
-      // 저장소 설정 정보 찾기
-      const repoConfig = accountsSettings.repositories.find(
-        (r: any) => r.fullName === repository.fullName
-      );
-      
-      if (!repoConfig) {
-        throw new Error(`계정 설정에서 저장소 정보(${repository.fullName})를 찾을 수 없습니다.`);
-      }
-      
-      // 저장소 타입 -> 계정 타입 매핑
-      const repoTypeToAccountTypeMap: Record<string, string> = {
-        'github': 'github',
-        'github-enterprise': 'github_enterprise'
-      };
-      
-      // 계정 ID와 타입 추출
-      let accountId = repoConfig.owner;
-      let preferredAccountType = null;
-      
-      // 계정 타입 확인
-      if (repoConfig.ownerReference) {
-        const [ownerId, accountType] = repoConfig.ownerReference.split('@');
+      if (repository.type === 'github-enterprise') {
+        // GitHub Enterprise 설정 로드
+        logger.info(`[GitHubDataCollector] GitHub Enterprise 설정 로드 중...`);
+        const enterpriseSettings = await accountsSettings.getGitHubEnterpriseSettings?.() || { enterpriseUrl: '', enterpriseToken: '' };
         
-        if (ownerId && accountType) {
-          accountId = ownerId;
-          preferredAccountType = accountType;
+        accessToken = repository.apiToken || enterpriseSettings.enterpriseToken;
+        
+        // API URL이 없는 경우 설정에서 가져옴
+        if (!baseUrl && enterpriseSettings.enterpriseUrl) {
+          baseUrl = enterpriseSettings.enterpriseUrl;
+          logger.info(`[GitHubDataCollector] Enterprise API URL 설정됨: ${baseUrl}`);
         }
-      } else if (repoConfig.type) {
-        preferredAccountType = repoTypeToAccountTypeMap[repoConfig.type];
-      }
-      
-      // API URL 및 토큰 설정
-      let apiUrl = '';
-      let apiToken = '';
-      
-      // 계정 정보 찾기
-      const ownerAccount = accountsSettings.accounts.find(
-        (a: any) => a.id === accountId && 
-        (!preferredAccountType || a.type === preferredAccountType)
-      );
-      
-      if (ownerAccount) {
-        apiUrl = ownerAccount.apiUrl || '';
-        apiToken = ownerAccount.token || '';
         
-        logger.info(`[GitHub] 저장소 ${repository.fullName} 설정: ${accountId}@${ownerAccount.type} 계정 사용`);
+        // 토큰 유효성 검증
+        if (!accessToken) {
+          const errorMsg = `GitHub Enterprise 토큰이 설정되지 않았습니다.`;
+          logger.error(`[GitHubDataCollector] ${errorMsg}`);
+          throw new Error(errorMsg);
+        } else if (accessToken.length < 30) {
+          logger.warn(`[GitHubDataCollector] GitHub Enterprise 토큰이 너무 짧습니다 (${accessToken.length}자). 유효한지 확인하세요.`);
+        } else {
+          logger.info(`[GitHubDataCollector] GitHub Enterprise 토큰 설정됨 (${accessToken.substring(0, 4)}...${accessToken.substring(accessToken.length - 4)})`);
+        }
+      } else if (repository.type === 'github') {
+        // GitHub 설정 로드
+        logger.info(`[GitHubDataCollector] GitHub 설정 로드 중...`);
+        const githubSettings = await accountsSettings.getGitHubSettings?.() || { token: '' };
+        
+        // 저장소 자체 토큰 우선 사용, 없으면 전역 설정 사용
+        accessToken = repository.apiToken || githubSettings.token;
+        
+        // API URL이 없으면 기본 GitHub API URL 사용
+        if (!baseUrl) {
+          baseUrl = 'https://api.github.com';
+          logger.info(`[GitHubDataCollector] 기본 GitHub API URL 설정됨: ${baseUrl}`);
+        }
+        
+        // 토큰 유효성 검증
+        if (!accessToken) {
+          logger.warn(`[GitHubDataCollector] GitHub 토큰이 설정되지 않았습니다. API 요청 제한이 적용됩니다.`);
+        } else if (accessToken.length < 30) {
+          logger.warn(`[GitHubDataCollector] GitHub 토큰이 너무 짧습니다 (${accessToken.length}자). 유효한지 확인하세요.`);
+        } else {
+          logger.info(`[GitHubDataCollector] GitHub 토큰 설정됨 (${accessToken.substring(0, 4)}...${accessToken.substring(accessToken.length - 4)})`);
+        }
       } else {
-        logger.warn(`[GitHub] ${accountId} 계정을 찾을 수 없습니다. 저장소 ${repository.fullName} 동기화가 실패할 수 있습니다.`);
-        
-        // 기본값 설정 - GitHub는 기본 URL 사용 가능
-        if (repoConfig.type === 'github') {
-          apiUrl = 'https://api.github.com';
-          logger.info(`[GitHub] 기본 GitHub API URL 사용: ${apiUrl}`);
-        }
+        accessToken = repository.apiToken;
+        logger.info(`[GitHubDataCollector] 저장소 자체 토큰 사용${accessToken ? ` (${accessToken.substring(0, 4)}...${accessToken.substring(accessToken.length - 4)})` : `: 없음`}`);
       }
       
-      // GitHub Enterprise 저장소이지만 API URL이 없는 경우 에러
-      if (repoConfig.type === 'github-enterprise' && !apiUrl) {
-        throw new Error(`GitHub Enterprise 저장소 ${repository.fullName}에 API URL이 설정되지 않았습니다.`);
-      }
-      
-      // API 토큰이 없는 경우 경고
-      if (!apiToken) {
-        logger.warn(`[GitHub] 저장소 ${repository.fullName}: API 토큰이 없습니다. 인증되지 않은 요청은 제한될 수 있습니다.`);
-      }
-      
-      // GitHubDataCollector 인스턴스 생성 및 반환 - 의존성 주입
-      logger.info(`[GitHub] 저장소 ${repository.fullName} 데이터 수집기 생성: API URL=${apiUrl}`);
-      return new GitHubDataCollector(
-        settingsRepo, 
-        repoInfoRepo, 
-        repositoryId, 
-        apiToken, 
-        apiUrl
-      );
+      // GitHubDataCollector 인스턴스 생성 및 반환
+      logger.info(`[GitHubDataCollector] 데이터 수집기 초기화 완료, ID: ${repositoryId}, URL: ${baseUrl || 'default'}`);
+      return new GitHubDataCollector(settingsRepo, repoInfoRepo, repositoryId, accessToken, baseUrl);
     } catch (error) {
-      logger.error(`[GitHub] 데이터 수집기 생성 중 오류: ${error instanceof Error ? error.message : String(error)}`);
+      const errorMsg = error instanceof Error ? error.message : String(error);
+      logger.error(`[GitHubDataCollector] 데이터 수집기 생성 중 오류 발생: ${errorMsg}`);
+      
+      if (error instanceof Error && error.stack) {
+        logger.error(`[GitHubDataCollector] 스택 트레이스: ${error.stack}`);
+      }
+      
       throw error;
     }
   }

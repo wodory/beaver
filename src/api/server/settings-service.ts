@@ -49,7 +49,7 @@ export class SettingsService {
       let result;
       
       if (DB_TYPE === 'postgresql') {
-        // PostgreSQL - 어댑터 쿼리 메소드 사용
+        // PostgreSQL - 문자열 쿼리 직접 사용
         const query = `SELECT "data" FROM "settings" WHERE "type" = 'user' AND "user_id" = ${userId} LIMIT 1`;
         console.log('[DEBUG] 실행할 사용자 설정 쿼리:', query);
         result = await dbAdapter.query(query);
@@ -184,11 +184,12 @@ export class SettingsService {
    */
   async getGitHubSettings(userId: number = DEFAULT_USER_ID): Promise<GitHubSettings> {
     try {
-      const db = getDB();
+      const dbAdapter = getDBAdapter();
       
-      let result;
+      let result: any[] = [];
+      
       if (DB_TYPE === 'postgresql') {
-        // PostgreSQL에서는 JSONB 경로 쿼리를 사용하여 계정 설정에서 GitHub 타입의 계정 정보를 검색
+        // PostgreSQL - 문자열 쿼리 직접 사용 
         const query = `
           SELECT jsonb_path_query(data, '$.accounts[*] ? (@.type == "github")') as github_data
           FROM settings 
@@ -196,117 +197,69 @@ export class SettingsService {
           LIMIT 1
         `;
         console.log('[DEBUG] 실행할 GitHub 설정 조회 쿼리:', query);
-        result = await db.execute(query);
+        result = await dbAdapter.query(query);
       } else {
-        // SQLite 등의 다른 DB에서는 계정 설정을 조회한 후 JavaScript에서 처리
-        result = await db.execute(`
-          SELECT data FROM settings 
-          WHERE type = 'accounts' AND user_id = ? 
-          LIMIT 1
-        `, [userId]);
+        // SQLite
+        const settings = await this.getAccountsSettings(userId);
+        const githubAccount = settings.accounts.find(account => account.type === 'github');
+        
+        if (githubAccount) {
+          return {
+            username: githubAccount.username || '',
+            token: githubAccount.token || '',
+            url: githubAccount.url || '',
+            apiUrl: githubAccount.apiUrl || 'https://api.github.com'
+          };
+        }
       }
       
-      // 결과 로깅
-      console.log(`[DEBUG] getGitHubSettings 결과: ${JSON.stringify(result)}`);
-      
-      // 계정 설정이 있는 경우
-      if (result && result.length > 0) {
+      if (result && Array.isArray(result) && result.length > 0) {
         try {
-          const data = typeof result[0].data === 'string' 
-            ? JSON.parse(result[0].data) 
-            : result[0].data;
-          
-          // PostgreSQL 케이스: github_data 필드에서 정보 추출
-          if (result[0].github_data) {
-            const githubAccount = typeof result[0].github_data === 'string'
-              ? JSON.parse(result[0].github_data)
-              : result[0].github_data;
-            
-            return {
-              token: githubAccount.token || '',
-              organization: githubAccount.org || '',
-              repositories: []
-            };
-          }
-          
-          // SQLite 등: data에서 github 계정 검색
-          if (data.accounts && Array.isArray(data.accounts)) {
-            const githubAccount = data.accounts.find((acc: { type: string }) => acc.type === 'github');
-            
-            if (githubAccount) {
+          // PostgreSQL 결과 처리
+          if (DB_TYPE === 'postgresql') {
+            const githubData = result[0].github_data;
+            if (githubData) {
               return {
-                token: githubAccount.token || '',
-                organization: githubAccount.org || '',
-                repositories: []
+                username: githubData.username || '',
+                token: githubData.token || '',
+                url: githubData.url || '',
+                apiUrl: githubData.apiUrl || 'https://api.github.com'
               };
             }
           }
           
-          // 계정 설정은 있지만 GitHub 계정은 없는 경우
-          console.log('[DEBUG] 계정 설정에서 GitHub 계정을 찾을 수 없습니다.');
-          return this.getDefaultGitHubSettings();
-        } catch (parseError) {
-          console.error('GitHub 설정 데이터 파싱 중 오류 발생:', parseError);
-          return this.getDefaultGitHubSettings();
-        }
-      }
-      
-      // 기존 방식으로 시도: github 타입으로 직접 조회
-      console.log('[DEBUG] 계정 설정에서 GitHub 정보를 찾지 못했습니다. 직접 조회를 시도합니다.');
-      
-      if (DB_TYPE === 'postgresql') {
-        const query = `
-          SELECT "data" FROM "settings" 
-          WHERE "type" = 'github' AND "user_id" = ${userId} 
-          LIMIT 1
-        `;
-        console.log('[DEBUG] 실행할 GitHub 직접 조회 쿼리:', query);
-        result = await db.execute(query);
-      } else {
-        result = await db.execute(`
-          SELECT data FROM settings 
-          WHERE type = ? AND user_id = ? 
-          LIMIT 1
-        `, ['github', userId]);
-      }
-      
-      console.log(`[DEBUG] GitHub 직접 조회 결과: ${JSON.stringify(result)}`);
-      
-      if (result && result.length > 0) {
-        try {
-          const data = typeof result[0].data === 'string' 
-            ? JSON.parse(result[0].data) 
-            : result[0].data;
+          // DB 자료 처리
+          const data = result[0].data ? JSON.parse(result[0].data) : {};
           
           return {
+            username: data.username || '',
             token: data.token || '',
-            organization: data.organization || '',
-            repositories: data.repositories || []
+            url: data.url || '',
+            apiUrl: data.apiUrl || 'https://api.github.com'
           };
         } catch (parseError) {
-          console.error('GitHub 설정 데이터 파싱 중 오류 발생:', parseError);
+          console.error('GitHub 설정 JSON 파싱 실패:', parseError);
           return this.getDefaultGitHubSettings();
         }
       }
       
-      // 설정이 없는 경우 기본값 반환
-      console.log('[DEBUG] GitHub 설정이 없습니다. 기본값을 반환합니다.');
       return this.getDefaultGitHubSettings();
     } catch (error) {
-      console.error('GitHub 설정 조회 중 오류 발생:', error);
+      console.error('GitHub 설정 조회 실패:', error);
       return this.getDefaultGitHubSettings();
     }
   }
   
   /**
    * 기본 GitHub 설정을 반환합니다.
-   * @returns 기본 GitHub 설정
+   * @returns 기본 GitHub 설정 객체
    */
   getDefaultGitHubSettings(): GitHubSettings {
     return {
+      username: '',
       token: '',
-      organization: '',
-      repositories: []
+      url: '',
+      apiUrl: 'https://api.github.com'
     };
   }
 
@@ -318,7 +271,7 @@ export class SettingsService {
    */
   async updateGitHubSettings(settings: Partial<GitHubSettings>, userId: number = DEFAULT_USER_ID): Promise<boolean> {
     try {
-      const db = getDB();
+      const dbAdapter = getDBAdapter();
       
       // 현재 설정 조회
       const currentSettings = await this.getGitHubSettings(userId);
@@ -339,8 +292,9 @@ export class SettingsService {
           LIMIT 1
         `;
         console.log('[DEBUG] 실행할 확인 쿼리:', checkQuery);
-        checkResult = await db.execute(checkQuery);
+        checkResult = await dbAdapter.query(checkQuery);
       } else {
+        const db = getDB();
         checkResult = await db.execute(`
           SELECT id FROM settings 
           WHERE type = ? AND user_id = ? 
@@ -362,8 +316,9 @@ export class SettingsService {
             WHERE "type" = 'github' AND "user_id" = ${userId}
           `;
           console.log('[DEBUG] 실행할 업데이트 쿼리 (데이터 길이):', updateQuery.length);
-          await db.execute(updateQuery);
+          await dbAdapter.query(updateQuery);
         } else {
+          const db = getDB();
           await db.execute(`
             UPDATE settings 
             SET data = ?, updated_at = CURRENT_TIMESTAMP 
@@ -380,8 +335,9 @@ export class SettingsService {
             VALUES ('github', ${userId}, '${escapedJsonData}'::jsonb, NOW(), NOW())
           `;
           console.log('[DEBUG] 실행할 삽입 쿼리 (데이터 길이):', insertQuery.length);
-          await db.execute(insertQuery);
+          await dbAdapter.query(insertQuery);
         } else {
+          const db = getDB();
           await db.execute(`
             INSERT INTO settings (type, user_id, data, created_at, updated_at) 
             VALUES (?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
@@ -403,7 +359,7 @@ export class SettingsService {
    */
   async getGitHubEnterpriseSettings(userId: number = DEFAULT_USER_ID): Promise<GitHubEnterpriseSettings> {
     try {
-      const db = getDB();
+      const dbAdapter = getDBAdapter();
       
       let result;
       if (DB_TYPE === 'postgresql') {
@@ -415,9 +371,10 @@ export class SettingsService {
           LIMIT 1
         `;
         console.log('[DEBUG] 실행할 GitHub Enterprise 설정 조회 쿼리:', query);
-        result = await db.execute(query);
+        result = await dbAdapter.query(query);
       } else {
         // SQLite 등의 다른 DB에서는 계정 설정을 조회한 후 JavaScript에서 처리
+        const db = getDB();
         result = await db.execute(`
           SELECT data FROM settings 
           WHERE type = 'accounts' AND user_id = ? 
@@ -486,8 +443,9 @@ export class SettingsService {
           LIMIT 1
         `;
         console.log('[DEBUG] 실행할 GitHub Enterprise 직접 조회 쿼리:', query);
-        result = await db.execute(query);
+        result = await dbAdapter.query(query);
       } else {
+        const db = getDB();
         result = await db.execute(`
           SELECT data FROM settings 
           WHERE type = ? AND user_id = ? 
@@ -549,7 +507,7 @@ export class SettingsService {
    */
   async updateGitHubEnterpriseSettings(settings: Partial<GitHubEnterpriseSettings>, userId: number = DEFAULT_USER_ID): Promise<boolean> {
     try {
-      const db = getDB();
+      const dbAdapter = getDBAdapter();
       
       // 현재 설정 조회
       const currentSettings = await this.getGitHubEnterpriseSettings(userId);
@@ -574,8 +532,9 @@ export class SettingsService {
           LIMIT 1
         `;
         console.log('[DEBUG] 실행할 확인 쿼리:', checkQuery);
-        checkResult = await db.execute(checkQuery);
+        checkResult = await dbAdapter.query(checkQuery);
       } else {
+        const db = getDB();
         checkResult = await db.execute(`
           SELECT id FROM settings 
           WHERE type = ? AND user_id = ? 
@@ -597,8 +556,9 @@ export class SettingsService {
             WHERE "type" = 'github_enterprise' AND "user_id" = ${userId}
           `;
           console.log('[DEBUG] 실행할 업데이트 쿼리 (데이터 길이):', updateQuery.length);
-          await db.execute(updateQuery);
+          await dbAdapter.query(updateQuery);
         } else {
+          const db = getDB();
           await db.execute(`
             UPDATE settings 
             SET data = ?, updated_at = CURRENT_TIMESTAMP 
@@ -615,8 +575,9 @@ export class SettingsService {
             VALUES ('github_enterprise', ${userId}, '${escapedJsonData}'::jsonb, NOW(), NOW())
           `;
           console.log('[DEBUG] 실행할 삽입 쿼리 (데이터 길이):', insertQuery.length);
-          await db.execute(insertQuery);
+          await dbAdapter.query(insertQuery);
         } else {
+          const db = getDB();
           await db.execute(`
             INSERT INTO settings (type, user_id, data, created_at, updated_at) 
             VALUES (?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
@@ -632,8 +593,69 @@ export class SettingsService {
   }
 
   /**
+   * Jira 설정을 가져옵니다.
+   * @param userId 사용자 ID (기본값: 1)
+   * @returns Jira 설정 객체
+   */
+  async getJiraSettings(userId: number = DEFAULT_USER_ID): Promise<JiraSettings> {
+    try {
+      const db = getDB();
+      const dbAdapter = getDBAdapter();
+      
+      let result: any[] = [];
+      
+      if (DB_TYPE === 'postgresql') {
+        // PostgreSQL - 문자열 쿼리 직접 사용
+        const query = `
+          SELECT "data" FROM "settings" 
+          WHERE "type" = 'jira' AND "user_id" = ${userId} 
+          LIMIT 1
+        `;
+        console.log('[DEBUG] 실행할 Jira 설정 조회 쿼리:', query);
+        result = await dbAdapter.query(query);
+      } else {
+        // SQLite
+        result = await db.execute(`
+          SELECT data FROM settings 
+          WHERE type = ? AND user_id = ? 
+          LIMIT 1
+        `, ['jira', userId]);
+      }
+      
+      if (result && Array.isArray(result) && result.length > 0) {
+        try {
+          let data: any;
+          
+          // PostgreSQL은 첫 번째 행의 data 필드에서 설정 조회
+          if (DB_TYPE === 'postgresql') {
+            data = result[0].data;
+          } else {
+            // SQLite는 첫 번째 행의 data 필드에서 설정 조회 후 JSON 파싱
+            data = JSON.parse(result[0].data);
+          }
+          
+          return {
+            url: data.url || '',
+            email: data.email || '',
+            apiToken: data.apiToken || '',
+            projectKey: data.projectKey || ''
+          };
+        } catch (parseError) {
+          console.error('Jira 설정 JSON 파싱 실패:', parseError);
+          return this.getDefaultJiraSettings();
+        }
+      }
+      
+      return this.getDefaultJiraSettings();
+    } catch (error) {
+      console.error('Jira 설정 조회 실패:', error);
+      return this.getDefaultJiraSettings();
+    }
+  }
+  
+  /**
    * 기본 Jira 설정을 반환합니다.
-   * @returns 기본 Jira 설정
+   * @returns 기본 Jira 설정 객체
    */
   getDefaultJiraSettings(): JiraSettings {
     return {
@@ -645,61 +667,6 @@ export class SettingsService {
   }
 
   /**
-   * Jira 설정을 조회합니다.
-   * @param userId 사용자 ID (기본값: 1)
-   * @returns Jira 설정
-   */
-  async getJiraSettings(userId: number = DEFAULT_USER_ID): Promise<JiraSettings> {
-    try {
-      const db = getDB();
-      
-      let result;
-      if (DB_TYPE === 'postgresql') {
-        const query = `
-          SELECT "data" FROM "settings" 
-          WHERE "type" = 'jira' AND "user_id" = ${userId} 
-          LIMIT 1
-        `;
-        console.log('[DEBUG] 실행할 Jira 설정 조회 쿼리:', query);
-        result = await db.execute(query);
-      } else {
-        result = await db.execute(`
-          SELECT data FROM settings 
-          WHERE type = ? AND user_id = ? 
-          LIMIT 1
-        `, ['jira', userId]);
-      }
-      
-      // 결과 로깅
-      console.log(`[DEBUG] getJiraSettings 결과: ${JSON.stringify(result)}`);
-      
-      if (result && result.length > 0) {
-        try {
-          const data = typeof result[0].data === 'string' 
-            ? JSON.parse(result[0].data) 
-            : result[0].data;
-          
-          // 데이터 유효성 확인 및 기본값 적용
-          return {
-            url: data.url || '',
-            email: data.email || '',
-            apiToken: data.apiToken || '',
-            projectKey: data.projectKey || ''
-          };
-        } catch (parseError) {
-          console.error('Jira 설정 파싱 실패:', parseError);
-          return this.getDefaultJiraSettings();
-        }
-      }
-      
-      return this.getDefaultJiraSettings();
-    } catch (error) {
-      console.error('Jira 설정 조회 실패:', error);
-      return this.getDefaultJiraSettings();
-    }
-  }
-
-  /**
    * Jira 설정을 업데이트합니다.
    * @param settings 새 설정 값
    * @param userId 사용자 ID (기본값: 1)
@@ -707,7 +674,7 @@ export class SettingsService {
    */
   async updateJiraSettings(settings: Partial<JiraSettings>, userId: number = DEFAULT_USER_ID): Promise<boolean> {
     try {
-      const db = getDB();
+      const dbAdapter = getDBAdapter();
       
       // 현재 설정 조회
       const currentSettings = await this.getJiraSettings(userId);
@@ -725,8 +692,9 @@ export class SettingsService {
           LIMIT 1
         `;
         console.log('[DEBUG] 실행할 확인 쿼리:', checkQuery);
-        checkResult = await db.execute(checkQuery);
+        checkResult = await dbAdapter.query(checkQuery);
       } else {
+        const db = getDB();
         checkResult = await db.execute(`
           SELECT id FROM settings 
           WHERE type = ? AND user_id = ? 
@@ -750,8 +718,9 @@ export class SettingsService {
             WHERE "type" = 'jira' AND "user_id" = ${userId}
           `;
           console.log('[DEBUG] 실행할 업데이트 쿼리 (데이터 길이):', updateQuery.length);
-          await db.execute(updateQuery);
+          await dbAdapter.query(updateQuery);
         } else {
+          const db = getDB();
           await db.execute(`
             UPDATE settings 
             SET data = ?, updated_at = CURRENT_TIMESTAMP 
@@ -770,8 +739,9 @@ export class SettingsService {
             VALUES ('jira', ${userId}, '${escapedJsonData}'::jsonb, NOW(), NOW())
           `;
           console.log('[DEBUG] 실행할 삽입 쿼리 (데이터 길이):', insertQuery.length);
-          await db.execute(insertQuery);
+          await dbAdapter.query(insertQuery);
         } else {
+          const db = getDB();
           await db.execute(`
             INSERT INTO settings (type, user_id, data, created_at, updated_at) 
             VALUES (?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
@@ -795,10 +765,10 @@ export class SettingsService {
     console.log(`[DEBUG] getAccountsSettings 메서드 호출됨 (userId: ${userId})`);
     try {
       // 항상 DB에서 최신 데이터 가져오기 (캐싱 비활성화)
-      const db = getDB();
+      const dbAdapter = getDBAdapter();
       console.log(`[DEBUG] DB 연결 타입: ${DB_TYPE}`);
       
-      let result;
+      let result: any[] = [];
       
       console.log('[DEBUG] PostgreSQL 쿼리 실행');
       // sql 태그드 템플릿이 아닌 execute 메서드 사용
@@ -808,11 +778,11 @@ export class SettingsService {
         LIMIT 1
       `;
       console.log('[DEBUG] 실행할 쿼리:', query);
-      result = await db.execute(query);
+      result = await dbAdapter.query(query);
       
       console.log('[DEBUG] DB 쿼리 결과:', result);
       
-      if (result && result.length > 0) {
+      if (result && Array.isArray(result) && result.length > 0) {
         // 항상 JSON.parse 실행 - PostgreSQL에서도 문자열로 저장/변환되어 있을 수 있음
         try {
           const rawData = result[0].data;
@@ -851,7 +821,7 @@ export class SettingsService {
    */
   async updateAccountsSettings(settings: Partial<AccountsSettings>, userId: number = DEFAULT_USER_ID): Promise<boolean> {
     try {
-      const db = getDB();
+      const dbAdapter = getDBAdapter();
       
       // 현재 설정 조회
       const currentSettings = await this.getAccountsSettings(userId);
@@ -875,8 +845,9 @@ export class SettingsService {
           LIMIT 1
         `;
         console.log('[DEBUG] 실행할 확인 쿼리:', checkQuery);
-        checkResult = await db.execute(checkQuery);
+        checkResult = await dbAdapter.query(checkQuery);
       } else {
+        const db = getDB();
         checkResult = await db.execute(`
           SELECT id FROM settings 
           WHERE type = ? AND user_id = ? 
@@ -902,8 +873,9 @@ export class SettingsService {
             WHERE "type" = 'accounts' AND "user_id" = ${userId}
           `;
           console.log('[DEBUG] 실행할 업데이트 쿼리 (데이터 길이):', updateQuery.length);
-          await db.execute(updateQuery);
+          await dbAdapter.query(updateQuery);
         } else {
+          const db = getDB();
           await db.execute(`
             UPDATE settings 
             SET data = ?, updated_at = CURRENT_TIMESTAMP 
@@ -922,8 +894,9 @@ export class SettingsService {
             VALUES ('accounts', ${userId}, '${escapedJsonData}'::jsonb, NOW(), NOW())
           `;
           console.log('[DEBUG] 실행할 삽입 쿼리 (데이터 길이):', insertQuery.length);
-          await db.execute(insertQuery);
+          await dbAdapter.query(insertQuery);
         } else {
+          const db = getDB();
           await db.execute(`
             INSERT INTO settings (type, user_id, data, created_at, updated_at) 
             VALUES (?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)

@@ -77,10 +77,15 @@ export interface BaseGitHostingSettings {
 
 /**
  * GitHub 설정 인터페이스
- * 표준 GitHub 관련 설정만 포함합니다.
+ * 새로운 GitHub 설정 형식을 반영합니다.
  */
-export interface GitHubSettings extends BaseGitHostingSettings {
-  token: string;
+export interface GitHubSettings {
+  username: string;      // GitHub 사용자 이름
+  token: string;         // 액세스 토큰
+  url: string;           // GitHub 서비스 URL (기본값: https://github.com)
+  apiUrl: string;        // API URL (기본값: https://api.github.com)
+  organization?: string; // 선택적 조직 필드 (하위 호환성 유지)
+  repositories?: string[]; // 선택적 저장소 목록 (하위 호환성 유지)
 }
 
 /**

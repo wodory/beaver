@@ -14,7 +14,7 @@ import { eq } from 'drizzle-orm';
 // 서버 인스턴스 생성
 export const fastify: FastifyInstance = Fastify({
   logger: {
-    level: 'error',
+    level: 'warn',
     transport: {
       target: 'pino-pretty',
       options: {

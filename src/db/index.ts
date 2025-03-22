@@ -20,24 +20,29 @@ const DB_TYPES = {
   SQLITE: 'sqlite'
 } as const;
 
-// 데이터베이스 타입 설정 (환경 변수에서 읽기)
-// 환경 변수를 직접 읽기 (dotenv 의존성 제거)
-export function getDbType(): string {
-  // 명시적으로 process.env.DB_TYPE 출력
-  console.log('DB_TYPE env variable:', process.env.DB_TYPE);
+/**
+ * 현재 사용 중인 DB 타입을 반환합니다.
+ * 
+ * @returns {'postgresql' | 'sqlite'} 현재 사용 중인 DB 타입
+ */
+export function getDbType(): 'postgresql' | 'sqlite' {
+  // 환경 변수에서 DB_TYPE 직접 확인 (dotenv는 이미 앱 시작 시점에 로드됨)
+  console.log('getDbType - 환경변수 DB_TYPE:', process.env.DB_TYPE);
   
-  // 값이 명시적으로 'sqlite'인 경우에만 SQLite 사용, 그렇지 않으면 기본값 postgresql
-  if (process.env.DB_TYPE === DB_TYPES.SQLITE) {
-    return DB_TYPES.SQLITE;
+  // 명시적으로 'sqlite'인 경우에만 SQLite 사용, 그 외에는 PostgreSQL 사용
+  if (process.env.DB_TYPE === 'sqlite') {
+    console.log('SQLite 데이터베이스 사용 결정됨');
+    return 'sqlite';
   }
-  return DB_TYPES.POSTGRESQL;
+  
+  console.log('PostgreSQL 데이터베이스 사용 결정됨');
+  return 'postgresql';
 }
 
-// DB_TYPE 변수 초기화
-export const DB_TYPE = getDbType();
+// DB 타입 결정 (환경 변수에서 직접 읽기)
+export const DB_TYPE = process.env.DB_TYPE === 'sqlite' ? 'sqlite' : 'postgresql';
 
-// 초기 DB 타입 출력
-console.log('Using database type:', DB_TYPE);
+console.log(`Using database type: ${DB_TYPE}`);
 
 // 데이터베이스 연결 문자열
 let DB_CONNECTION = '';
@@ -50,8 +55,15 @@ let dbAdapterInstance: IDatabaseAdapter | null = null;
 // 데이터베이스 스키마 객체를 내보냅니다.
 export { schema, schemaSQLite };
 
-// 데이터베이스 유형에 따라 스키마 선택
-export const schemaToUse = DB_TYPE === DB_TYPES.SQLITE ? schemaSQLite : schema;
+// DB 타입에 따른 스키마 선택
+export let schemaToUse: typeof schema | typeof schemaSQLite;
+if (DB_TYPE === 'sqlite') {
+  console.log('SQLite 스키마 사용');
+  schemaToUse = schemaSQLite;
+} else {
+  console.log('PostgreSQL 스키마 사용');
+  schemaToUse = schema;
+}
 
 // 데이터베이스 어댑터 팩토리 (직접 구현)
 class DatabaseAdapterFactory {
@@ -127,7 +139,7 @@ export async function initializeDatabase(): Promise<any> {
     console.log('Resolved database type:', getDbType());
     
     // 데이터베이스 유형에 따라 다른 초기화 로직 사용
-    if (getDbType() === DB_TYPES.SQLITE) {
+    if (getDbType() === 'sqlite') {
       console.log('SQLite 데이터베이스 초기화 중...');
       return await initializeSQLiteDatabase();
     } else {

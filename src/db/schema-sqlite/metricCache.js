@@ -1,5 +1,4 @@
-import { sqliteTable, integer, text } from 'drizzle-orm/sqlite-core';
-import { sql } from 'drizzle-orm';
+import { sqliteTable, text, integer, primaryKey } from 'drizzle-orm/sqlite-core';
 
 /**
  * 메트릭 캐시 테이블 스키마
@@ -9,12 +8,13 @@ import { sql } from 'drizzle-orm';
  */
 export const metricCache = sqliteTable('metric_cache', {
     id: integer('id').primaryKey({ autoIncrement: true }),
-    cacheKey: text('cache_key').notNull().unique(),
-    metricType: text('metric_type').notNull(), // 'user', 'team', 'repository'
-    targetId: text('target_id').notNull(), // user id, team name, or repository id
-    startDate: text('start_date').notNull(),
-    endDate: text('end_date').notNull(),
-    data: text('data').notNull(), // JSON data as text in SQLite
-    createdAt: text('created_at').default(sql`CURRENT_TIMESTAMP`).notNull(),
-    expiresAt: text('expires_at').notNull()
+    key: text('key').notNull(),
+    value: text('value').notNull(),
+    type: text('type').notNull(),
+    repositoryId: integer('repository_id'),
+    userId: integer('user_id'),
+    teamId: integer('team_id'),
+    validUntil: integer('valid_until', { mode: 'timestamp' }),
+    createdAt: integer('created_at', { mode: 'timestamp' }).defaultNow(),
+    updatedAt: integer('updated_at', { mode: 'timestamp' }).defaultNow(),
 }); 

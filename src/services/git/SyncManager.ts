@@ -273,6 +273,8 @@ export class SyncManager {
    */
   async syncRepository(repoId: number, forceFull: boolean = false): Promise<SyncResult> {
     const startTime = new Date();
+    logger.info(`=== 저장소 동기화 시작 (ID: ${repoId}, 전체 동기화: ${forceFull}) ===`);
+    
     const result: SyncResult = {
       repositoryId: repoId,
       repositoryName: '',
@@ -289,29 +291,36 @@ export class SyncManager {
     
     try {
       // 1. 저장소 정보 조회
+      logger.info(`[1/6] 저장소 정보 조회 중... (ID: ${repoId})`);
       const repoInfo = await this.getRepository(repoId);
       if (!repoInfo) {
-        result.message = `저장소 ID ${repoId}를 찾을 수 없습니다.`;
+        const errorMsg = `저장소 ID ${repoId}를 찾을 수 없습니다.`;
+        logger.error(errorMsg);
+        result.message = errorMsg;
         return result;
       }
       
       result.repositoryName = repoInfo.name;
-      logger.info(`저장소 [${repoInfo.fullName}] 동기화 시작`);
+      logger.info(`[1/6] 저장소 정보 조회 완료: [${repoInfo.fullName}] (타입: ${repoInfo.type})`);
       
       // 전체 동기화인 경우 마지막 동기화 시간 초기화
       if (forceFull) {
+        logger.info(`[2/6] 전체 동기화 모드 - 마지막 동기화 시간 초기화 중...`);
         await this.resetLastSyncAt(repoId);
-        logger.info(`전체 동기화 모드: 저장소 [${repoInfo.fullName}]의 마지막 동기화 시간 초기화됨`);
+        logger.info(`[2/6] 마지막 동기화 시간 초기화 완료`);
+      } else {
+        logger.info(`[2/6] 증분 동기화 모드 - 마지막 동기화(${repoInfo.lastSyncAt}) 이후 데이터만 가져옵니다.`);
       }
       
       // 2. 저장소 타입에 따른 API 토큰 선택
+      logger.info(`[3/6] API 토큰 및 URL 설정 중...`);
       let apiToken: string | undefined;
       let apiUrl: string | undefined = repoInfo.apiUrl;
       
       if (repoInfo.type === 'github-enterprise') {
         // GitHub Enterprise의 경우 enterprise 설정에서 토큰 가져오기
         const githubEnterpriseSettings = await this.settingsService.getGitHubEnterpriseSettings();
-        logger.info(`GitHub Enterprise 저장소 [${repoInfo.fullName}] 처리 - Enterprise 설정 로드됨`);
+        logger.info(`GitHub Enterprise 설정 로드됨: URL=${githubEnterpriseSettings.enterpriseUrl || '없음'}`);
         
         if (!githubEnterpriseSettings.enterpriseToken) {
           const errorMessage = `GitHub Enterprise 토큰이 설정되지 않았습니다. 설정 페이지에서 Enterprise 토큰을 확인하세요.`;
@@ -329,10 +338,11 @@ export class SyncManager {
           apiUrl = githubEnterpriseSettings.enterpriseUrl;
         }
         
-        logger.info(`GitHub Enterprise 저장소 [${repoInfo.fullName}] - Enterprise 토큰 사용`);
+        logger.info(`GitHub Enterprise 토큰 사용: ${apiToken.substring(0, 4)}...${apiToken.substring(apiToken.length - 4)}`);
       } else if (repoInfo.type === 'github') {
         // 일반 GitHub 저장소의 경우 GitHub 설정에서 토큰 가져오기
         const githubSettings = await this.settingsService.getGitHubSettings();
+        logger.info(`GitHub 설정 로드됨`);
         
         // 저장소에 토큰이 있으면 그것을 우선 사용, 없으면 전역 설정 사용
         apiToken = repoInfo.apiToken || githubSettings.token;
@@ -342,49 +352,88 @@ export class SyncManager {
           apiUrl = 'https://api.github.com';
         }
         
-        logger.info(`GitHub 저장소 [${repoInfo.fullName}] - GitHub 토큰 사용`);
+        if (apiToken) {
+          logger.info(`GitHub 토큰 사용: ${apiToken.substring(0, 4)}...${apiToken.substring(apiToken.length - 4)}`);
+        } else {
+          logger.warn(`GitHub 토큰이 설정되지 않았습니다.`);
+        }
       } else {
         // 다른 타입의 저장소는 저장소 설정의 토큰 사용
         apiToken = repoInfo.apiToken;
+        if (apiToken) {
+          logger.info(`저장소 자체 토큰 사용: ${apiToken.substring(0, 4)}...${apiToken.substring(apiToken.length - 4)}`);
+        }
       }
       
+      // 토큰 유효성 검증
       if (!apiToken) {
-        logger.warn(`저장소 [${repoInfo.fullName}]에 API 토큰이 설정되지 않았습니다. 인증 없이 진행합니다.`);
+        logger.warn(`[3/6] 저장소 [${repoInfo.fullName}]에 API 토큰이 설정되지 않았습니다. GitHub API 요청 제한으로 동기화가 실패할 수 있습니다.`);
+      } else if (apiToken.length < 30) {
+        logger.warn(`[3/6] API 토큰이 너무 짧습니다 (${apiToken.length}자). 유효한 GitHub 토큰인지 확인하세요.`);
       } else {
-        logger.info(`저장소 [${repoInfo.fullName}]에 API 토큰이 설정되어 있습니다.`);
+        logger.info(`[3/6] API 토큰 설정 완료`);
       }
       
-      // 3. API URL 확인
-      logger.info(`저장소 [${repoInfo.fullName}] API URL: ${apiUrl || 'default'}`);
+      if (!apiUrl) {
+        logger.warn(`[3/6] API URL이 설정되지 않았습니다. 기본 GitHub API URL을 사용합니다.`);
+        apiUrl = 'https://api.github.com';
+      }
+      
+      logger.info(`[3/6] 최종 API URL: ${apiUrl}`);
       
       // 4. 데이터 수집기 초기화
-      logger.info(`저장소 [${repoInfo.fullName}] 데이터 수집기 초기화 - API Token: ${apiToken ? '설정됨' : '없음'}, API URL: ${apiUrl || 'default'}`);
+      logger.info(`[4/6] GitHubDataCollector 초기화 중...`);
       
-      const { GitHubDataCollector } = await import('./services/github/GitHubDataCollector.js');
-      
-      // 정적 팩토리 메서드를 사용하여 데이터 수집기 초기화
-      const collector = await GitHubDataCollector.createForRepository(repoId);
-      
-      // 5. 데이터 동기화 실행
-      logger.info(`저장소 [${repoInfo.fullName}] 데이터 수집 시작`);
-      const syncResult = await collector.syncAll();
-      
-      // 6. 결과 설정
-      result.commitCount = syncResult.commitCount;
-      result.pullRequestCount = syncResult.pullRequestCount;
-      result.reviewCount = syncResult.reviewCount;
-      result.success = true;
-      result.message = `저장소 [${repoInfo.fullName}] 동기화 완료: ${syncResult.commitCount}개의 커밋, ${syncResult.pullRequestCount}개의 PR, ${syncResult.reviewCount}개의 리뷰 수집됨`;
-      
-      logger.info(result.message);
+      try {
+        const { GitHubDataCollector } = await import('./services/github/GitHubDataCollector.js');
+        
+        // 정적 팩토리 메서드를 사용하여 데이터 수집기 초기화
+        logger.info(`[4/6] 데이터 수집기 팩토리 메서드 호출 중...`);
+        const collector = await GitHubDataCollector.createForRepository(repoId);
+        logger.info(`[4/6] 데이터 수집기 초기화 완료`);
+        
+        // 5. 데이터 동기화 실행
+        logger.info(`[5/6] 데이터 수집 시작 (${repoInfo.fullName})`);
+        const syncResult = await collector.syncAll();
+        logger.info(`[5/6] 데이터 수집 완료: 커밋 ${syncResult.commitCount}개, PR ${syncResult.pullRequestCount}개, 리뷰 ${syncResult.reviewCount}개`);
+        
+        // 6. 결과 설정
+        result.commitCount = syncResult.commitCount;
+        result.pullRequestCount = syncResult.pullRequestCount;
+        result.reviewCount = syncResult.reviewCount;
+        result.success = true;
+        result.message = `저장소 [${repoInfo.fullName}] 동기화 완료: ${syncResult.commitCount}개의 커밋, ${syncResult.pullRequestCount}개의 PR, ${syncResult.reviewCount}개의 리뷰 수집됨`;
+        
+        logger.info(`[6/6] 동기화 성공: ${result.message}`);
+      } catch (collectError) {
+        // 데이터 수집기 초기화 또는 동기화 중 오류 발생
+        const detailedError = collectError instanceof Error ? 
+          { message: collectError.message, stack: collectError.stack } : 
+          String(collectError);
+          
+        logger.error(`데이터 수집 중 오류 발생:`, detailedError);
+        
+        const errorMessage = collectError instanceof Error ? collectError.message : String(collectError);
+        result.success = false;
+        result.message = `저장소 동기화 실패: ${errorMessage}`;
+        result.errors.push(errorMessage);
+        throw collectError; // 상세 스택 트레이스를 로그에 기록하기 위해 다시 throw
+      }
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);
       result.success = false;
       result.message = `저장소 동기화 실패: ${errorMessage}`;
       result.errors.push(errorMessage);
       logger.error(`저장소 ID ${repoId} 동기화 중 오류 발생:`, error);
+      // 스택 트레이스 로깅 추가
+      if (error instanceof Error && error.stack) {
+        logger.error(`오류 스택 트레이스: ${error.stack}`);
+      }
     } finally {
+      // 동기화 완료 시간 기록
       result.endTime = new Date();
+      const duration = (result.endTime.getTime() - result.startTime.getTime()) / 1000;
+      logger.info(`=== 저장소 동기화 완료 (ID: ${repoId}, 소요시간: ${duration}초) ===`);
     }
     
     return result;

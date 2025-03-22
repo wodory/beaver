@@ -1,4 +1,4 @@
-import { sqliteTable, integer, text, sql } from 'drizzle-orm/sqlite-core';
+import { sqliteTable, text, integer, primaryKey } from 'drizzle-orm/sqlite-core';
 import { pullRequests } from './pullRequests.js';
 import { users } from './users.js';
 
@@ -14,7 +14,21 @@ export const prReviews = sqliteTable('pr_reviews', {
     reviewerId: integer('reviewer_id').references(() => users.id),
     state: text('state').notNull(), // 'APPROVED' | 'CHANGES_REQUESTED' | 'COMMENTED' | 'DISMISSED'
     body: text('body'),
-    submittedAt: text('submitted_at').notNull(),
-    createdAt: text('created_at').notNull().default(sql`CURRENT_TIMESTAMP`),
-    updatedAt: text('updated_at').notNull().default(sql`CURRENT_TIMESTAMP`)
+    submittedAt: integer('submitted_at', { mode: 'timestamp' }),
+    createdAt: integer('created_at', { mode: 'timestamp' }).defaultNow(),
+    updatedAt: integer('updated_at', { mode: 'timestamp' }).defaultNow(),
+});
+
+/**
+ * 리뷰 테이블 스키마 정의
+ */
+export const reviews = sqliteTable('reviews', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  pullRequestId: integer('pull_request_id').notNull(),
+  userId: integer('user_id'),
+  state: text('state').notNull(),
+  body: text('body'),
+  submittedAt: integer('submitted_at', { mode: 'timestamp' }),
+  createdAt: integer('created_at', { mode: 'timestamp' }).defaultNow(),
+  updatedAt: integer('updated_at', { mode: 'timestamp' }).defaultNow(),
 }); 
