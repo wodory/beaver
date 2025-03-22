@@ -224,9 +224,9 @@ export function AccountsTab() {
   const loadRepositoriesWithoutData = async () => {
     try {
       setLoadingWithoutData(true);
-      console.log('[DEBUG] 데이터가 없는 저장소 조회 요청 시작', { activeTab });
+      console.log('[DEBUG] 데이터가 없는 저장소 조회 요청 시작');
       
-      const response = await fetch(`/api/settings/repositories/without-data?serviceType=${activeTab}`);
+      const response = await fetch('/api/settings/repositories/without-data');
       console.log('[DEBUG] 응답 상태:', response.status, response.statusText);
       
       // 응답이 성공적이지 않은 경우 오류 처리
@@ -248,31 +248,28 @@ export function AccountsTab() {
       const data = await response.json();
       console.log('[DEBUG] 데이터가 없는 저장소 응답:', data);
       
-      // 저장소 데이터 상태 업데이트
-      if (data && data.repositories) {
+      if (data.success && data.repositories) {
         const newState: RepositoryDataState = {};
         
-        // 현재 저장소 상태 초기화 (선택된 탭의 저장소만)
-        const filteredRepositories = getRepositoriesByType(activeTab);
-        filteredRepositories.forEach(repo => {
-          newState[repo.id] = { loading: false, hasData: true };
-        });
+        // 모든 저장소는 기본적으로 데이터를 가지고 있다고 가정
+        if (settings?.repositories) {
+          settings.repositories.forEach(repo => {
+            newState[repo.id] = { loading: false, hasData: true };
+          });
+        }
         
-        // 데이터가 없는 저장소 상태 설정
+        // 데이터가 없는 저장소 상태 업데이트
         data.repositories.forEach((repo: any) => {
-          // 현재 활성 탭의 저장소 유형과 일치하는 저장소만 처리
-          if (repo.type === activeTab) {
-            newState[repo.id] = { loading: false, hasData: false };
-          }
+          newState[repo.id] = { loading: false, hasData: false };
         });
         
-        setRepoDataState(prev => ({
-          ...prev,
-          ...newState
-        }));
+        setRepoDataState(newState);
+      } else {
+        console.warn('API 응답에 예상된 데이터가 없습니다:', data);
+        toast.warning('저장소 데이터 상태를 조회할 수 없습니다.');
       }
     } catch (error) {
-      console.error('데이터가 없는 저장소 조회 중 오류 발생:', error);
+      console.error('데이터가 없는 저장소 목록 조회 중 오류 발생:', error);
       toast.error('저장소 데이터 조회 중 오류가 발생했습니다: ' + (error instanceof Error ? error.message : String(error)));
     } finally {
       setLoadingWithoutData(false);
@@ -319,13 +316,8 @@ export function AccountsTab() {
       setLoadingWithoutData(true);
       console.log('[DEBUG] 데이터가 없는 모든 저장소 동기화 요청 시작', { activeTab });
       
-      const response = await fetch('/api/settings/repositories/sync-all-without-data', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({ serviceType: activeTab })
-      });
+      // GET 방식으로 변경하고 쿼리 파라미터로 서비스 타입 전달
+      const response = await fetch(`/api/settings/repositories/sync-all-without-data?serviceType=${activeTab}`);
       
       console.log('[DEBUG] 응답 상태:', response.status, response.statusText);
       

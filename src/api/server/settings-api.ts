@@ -439,21 +439,11 @@ export async function settingsRoutes(fastify: FastifyInstance) {
   /**
    * 데이터가 없는 저장소 목록 조회
    */
-  fastify.get('/api/settings/repositories/without-data', async (request, reply) => {
+  fastify.get('/api/settings/repositories/without-data', async (_, reply) => {
     try {
-      const { serviceType } = request.query as { serviceType?: string };
-      logger.info(`데이터가 없는 저장소 목록 조회 요청 - 서비스 유형: ${serviceType || '전체'}`);
-      
       const syncManager = new SyncManager();
       try {
-        const allRepositoriesWithoutData = await syncManager.getRepositoriesWithoutData();
-        
-        // 서비스 유형에 따라 필터링
-        const repositories = serviceType
-          ? allRepositoriesWithoutData.filter(repo => repo.type === serviceType)
-          : allRepositoriesWithoutData;
-        
-        logger.info(`데이터가 없는 저장소 수: ${repositories.length}${serviceType ? ` (${serviceType} 유형)` : ''}`);
+        const repositories = await syncManager.getRepositoriesWithoutData();
         
         return {
           success: true,
@@ -469,19 +459,11 @@ export async function settingsRoutes(fastify: FastifyInstance) {
         // sync_history 테이블이 없는 경우나 다른 DB 오류 처리
         logger.warn('저장소 데이터 조회 중 오류 발생, 모든 저장소를 반환합니다:', error);
         
-        // 대체 방법: 모든 저장소 반환 (필터링 적용)
+        // 대체 방법: 모든 저장소 반환
         const allRepositories = await syncManager.getAllRepositories();
-        
-        // 서비스 유형에 따라 필터링
-        const repositories = serviceType
-          ? allRepositories.filter(repo => repo.type === serviceType)
-          : allRepositories;
-        
-        logger.info(`필터링된 모든 저장소 수: ${repositories.length}${serviceType ? ` (${serviceType} 유형)` : ''}`);
-        
         return {
           success: true,
-          repositories: repositories.map((repo: any) => ({
+          repositories: allRepositories.map((repo: any) => ({
             id: repo.id,
             name: repo.name,
             fullName: repo.fullName,
@@ -749,14 +731,14 @@ export async function settingsRoutes(fastify: FastifyInstance) {
   });
 
   /**
-   * 데이터가 없는 모든 저장소 동기화 API
+   * 데이터가 없는 모든 저장소 동기화 API (GET 방식)
    */
-  fastify.post('/api/settings/repositories/sync-all-without-data', async (request, reply) => {
+  fastify.get('/api/settings/repositories/sync-all-without-data', async (request, reply) => {
     try {
-      const syncManager = new SyncManager();
-      const { serviceType } = request.body as { serviceType?: string };
+      const { serviceType } = request.query as { serviceType?: string };
+      logger.info(`데이터가 없는 저장소 동기화 GET 요청 수신 - 서비스 유형: ${serviceType || '전체'}`);
       
-      logger.info(`데이터가 없는 저장소 동기화 요청 수신 - 서비스 유형: ${serviceType || '전체'}`);
+      const syncManager = new SyncManager();
       
       // 데이터가 없는 저장소 목록 조회
       const allRepositoriesWithoutData = await syncManager.getRepositoriesWithoutData();
@@ -765,6 +747,71 @@ export async function settingsRoutes(fastify: FastifyInstance) {
       const repositories = serviceType
         ? allRepositoriesWithoutData.filter(repo => repo.type === serviceType)
         : allRepositoriesWithoutData;
+      
+      logger.info(`필터링된 데이터가 없는 저장소 수: ${repositories.length}${serviceType ? ` (${serviceType} 유형)` : ''}`);
+      
+      if (repositories.length === 0) {
+        return reply.send({
+          message: serviceType 
+            ? `${serviceType} 유형에서 데이터가 없는 저장소가 없습니다.` 
+            : '데이터가 없는 저장소가 없습니다. 모든 저장소에 이미 데이터가 있습니다.',
+          status: 'completed',
+          repositoryIds: []
+        });
+      }
+      
+      const repositoryIds = repositories.map(repo => repo.id);
+      
+      logger.info(`데이터가 없는 ${repositoryIds.length}개 저장소 동기화 시작`);
+      
+      // 각 저장소를 개별적으로 동기화 (백그라운드에서 실행)
+      repositoryIds.forEach(repoId => {
+        syncManager.syncRepository(repoId)
+          .catch(error => {
+            logger.error(`저장소 ID ${repoId} 동기화 중 오류 발생:`, error);
+          });
+      });
+      
+      // 바로 응답
+      return reply.send({
+        message: `데이터가 없는 ${repositoryIds.length}개 저장소 동기화가 시작되었습니다.`,
+        status: 'started',
+        repositoryIds,
+        repositories: repositories.map(repo => ({
+          id: repo.id,
+          name: repo.name,
+          fullName: repo.fullName,
+          type: repo.type // 저장소 유형도 함께 반환
+        }))
+      });
+    } catch (error) {
+      logger.error('데이터가 없는 저장소 동기화 요청 중 오류 발생:', error);
+      return reply.status(500).send({
+        error: '데이터가 없는 저장소 동기화를 시작할 수 없습니다.',
+        message: error instanceof Error ? error.message : String(error)
+      });
+    }
+  });
+
+  /**
+   * 데이터가 없는 모든 저장소 동기화 API (POST 방식)
+   */
+  fastify.post('/api/settings/repositories/sync-all-without-data', async (request, reply) => {
+    try {
+      const { serviceType } = request.body as { serviceType?: string };
+      logger.info(`데이터가 없는 저장소 동기화 POST 요청 수신 - 서비스 유형: ${serviceType || '전체'}`);
+      
+      const syncManager = new SyncManager();
+      
+      // 데이터가 없는 저장소 목록 조회
+      const allRepositoriesWithoutData = await syncManager.getRepositoriesWithoutData();
+      
+      // 서비스 유형에 따라 필터링
+      const repositories = serviceType
+        ? allRepositoriesWithoutData.filter(repo => repo.type === serviceType)
+        : allRepositoriesWithoutData;
+      
+      logger.info(`필터링된 데이터가 없는 저장소 수: ${repositories.length}${serviceType ? ` (${serviceType} 유형)` : ''}`);
       
       if (repositories.length === 0) {
         return reply.send({

@@ -34,10 +34,18 @@ export default defineConfig({
         changeOrigin: true,
         secure: false,
         ws: true,
+        rewrite: (path) => path,
+        // 요청 헤더 케이스 보존 설정
+        preserveHeaderKeyCase: true,
         // 3001 포트로 리다이렉트할 때 응답 헤더 로깅 (디버깅용)
         configure: (proxy, _options) => {
           proxy.on('proxyRes', (proxyRes, req, _res) => {
             console.log(`[Proxy] ${req.method} ${req.url} -> ${proxyRes.statusCode}`);
+          });
+          
+          // 요청 로깅
+          proxy.on('proxyReq', (proxyReq, req, _res) => {
+            console.log(`[Proxy] 요청 헤더: ${req.headers['content-type'] || '없음'}`);
           });
         }
       }

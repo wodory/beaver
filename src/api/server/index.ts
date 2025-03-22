@@ -13,7 +13,16 @@ import { eq } from 'drizzle-orm';
 
 // 서버 인스턴스 생성
 export const fastify: FastifyInstance = Fastify({
-  logger: true
+  logger: {
+    level: 'error',
+    transport: {
+      target: 'pino-pretty',
+      options: {
+        translateTime: 'HH:MM:ss Z',
+        ignore: 'pid,hostname,reqId,req,res'
+      }
+    }
+  }
 });
 
 /**

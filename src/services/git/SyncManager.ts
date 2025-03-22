@@ -108,9 +108,10 @@ export class SyncManager {
         return {};
       }
 
-      // 직접 SQL 쿼리 사용 (systemSettings 테이블이 없을 수 있음)
-      const result = await getDB().execute(
-        `SELECT value FROM system_settings WHERE key = 'default_settings'`
+      // Drizzle ORM 사용
+      const db = getDB();
+      const result = await db.execute(
+        sql`SELECT value FROM system_settings WHERE key = 'default_settings'`
       );
       
       if (result && result.length > 0) {
@@ -136,24 +137,26 @@ export class SyncManager {
         return;
       }
       
-      // 직접 SQL 쿼리 사용 (systemSettings 테이블이 없을 수 있음)
-      const result = await getDB().execute(
-        `SELECT COUNT(*) as count FROM system_settings WHERE key = 'default_settings'`
+      // Drizzle ORM 사용
+      const db = getDB();
+      // 설정이 존재하는지 확인
+      const result = await db.execute(
+        sql`SELECT COUNT(*) as count FROM system_settings WHERE key = 'default_settings'`
       );
       
       const count = parseInt(result[0].count);
       const settingsJson = JSON.stringify(settings);
       
       if (count > 0) {
-        // 기존 설정 업데이트 - parameterized query 방식 변경
-        await getDB().execute(sql`
+        // 기존 설정 업데이트
+        await db.execute(sql`
           UPDATE system_settings 
           SET value = ${settingsJson}, updated_at = NOW() 
           WHERE key = 'default_settings'
         `);
       } else {
-        // 새 설정 삽입 - parameterized query 방식 변경
-        await getDB().execute(sql`
+        // 새 설정 삽입
+        await db.execute(sql`
           INSERT INTO system_settings (key, value) 
           VALUES ('default_settings', ${settingsJson})
         `);
@@ -633,8 +636,13 @@ export class SyncManager {
     try {
       const db = await this.getDb();
       
+      // 현재 사용 중인 DB 유형 로깅
+      const dbType = process.env.DB_TYPE || 'postgresql';
+      logger.info(`데이터가 없는 저장소 조회 중 - 사용 중인 DB 유형: ${dbType}`);
+      
       try {
-        // commit 정보가 없는 저장소 확인
+        // Drizzle ORM 사용하여 commit 정보가 없는 저장소 확인
+        logger.info('데이터가 없는 저장소 쿼리 실행 시작');
         const repositories = await db.execute(
           sql`SELECT r.* FROM repositories r
               LEFT JOIN (
@@ -644,6 +652,8 @@ export class SyncManager {
               ) c ON r.id = c.repository_id
               WHERE c.commit_count IS NULL OR c.commit_count = 0`
         );
+        
+        logger.info(`데이터가 없는 저장소 쿼리 완료: ${repositories.length}개 저장소 발견`);
 
         return repositories.map((repo: any) => ({
           id: repo.id,
@@ -653,15 +663,26 @@ export class SyncManager {
           type: repo.type
         }));
       } catch (error) {
-        // sync_history 테이블이 존재하지 않거나 SQL 실행 중 오류 발생
-        logger.warn('데이터가 없는 저장소 조회 중 DB 오류 발생:', error);
+        // 구체적인 오류 정보 로깅
+        const errorMessage = error instanceof Error ? error.message : String(error);
+        logger.warn(`데이터가 없는 저장소 조회 중 DB 오류 발생: ${errorMessage}`);
         
         // 테이블이 존재하지 않는 경우 모든 저장소를 반환
         if (error instanceof Error && 
-            (error.message.includes('no such table') || 
-             error.message.includes('relation') && error.message.includes('does not exist'))) {
-          logger.warn('sync_history 테이블이 존재하지 않아 모든 저장소를 반환합니다.');
+            (errorMessage.includes('no such table') || 
+             errorMessage.includes('relation') && errorMessage.includes('does not exist'))) {
+          logger.warn('commits 테이블이 존재하지 않아 모든 저장소를 반환합니다.');
           return this.getAllRepositories();
+        }
+        
+        // SQL 쿼리 오류의 경우 대체 쿼리 시도
+        if (errorMessage.includes('column') && errorMessage.includes('does not exist')) {
+          try {
+            logger.info('대체 쿼리를 사용하여 모든 저장소를 반환합니다.');
+            return await this.getAllRepositories();
+          } catch (fallbackError) {
+            logger.error('대체 쿼리 실행 중 오류 발생:', fallbackError);
+          }
         }
         
         throw error; // 다른 오류는 상위로 전파
