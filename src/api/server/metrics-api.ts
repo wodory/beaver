@@ -691,7 +691,7 @@ export async function metricsRoutes(fastify: FastifyInstance) {
           console.log('ID로 개발자 조회:', devIdNum);
           const db = getDB();
           
-          // ID로 사용자 조회
+          // ID로 사용자 조회 - githubId 컬럼을 참조하지 않도록 수정
           const userRows = await db.select()
             .from(schema.users)
             .where(eq(schema.users.id, devIdNum));
@@ -1431,136 +1431,6 @@ async function calculateProjectMetricsFromApi(repository: any, startDate: Date, 
     dailyMetrics // 일별 메트릭스
   };
 }
-
-/**
- * PR, 리뷰 및 배포 데이터를 기반으로 메트릭스 계산
- */
-/* function calculateMetrics(
-  pullRequests: PullRequest[],
-  prDetails: Record<number, { reviews: GithubReview[], commits: GithubCommit[] }>,
-  deployments: DeploymentEvent[]
-): any {
-  // 일별 메트릭스 초기화
-  const dailyMetrics: any[] = [];
-  
-  // 기본 메트릭스 계산
-  const prCount = pullRequests.length;
-  const prMergedCount = pullRequests.filter(pr => pr.merged_at).length;
-  
-  // 리뷰 데이터 추출
-  const allReviews = Object.values(prDetails).flatMap(detail => detail.reviews);
-  const reviewCount = allReviews.length;
-  
-  // 커밋 데이터 추출
-  const allCommits = Object.values(prDetails).flatMap(detail => detail.commits);
-  const commitCount = allCommits.length;
-  
-  // 기여자 목록 추출
-  const contributors = new Set<string>();
-  pullRequests.forEach(pr => {
-    if (pr.user?.login) {
-      contributors.add(pr.user.login);
-    }
-  });
-  allCommits.forEach(commit => {
-    const authorCommit = commit as any; // 타입 캐스팅
-    if (authorCommit.author?.login) {
-      contributors.add(authorCommit.author.login);
-    }
-  });
-  
-  // 변경된 줄 수 계산
-  let totalAdditions = 0;
-  let totalDeletions = 0;
-  allCommits.forEach(commit => {
-    if (commit.stats) {
-      totalAdditions += commit.stats.additions || 0;
-      totalDeletions += commit.stats.deletions || 0;
-    }
-  });
-  
-  // DORA 메트릭스 계산
-  const deploymentFrequency = deployments.length > 0 ?
-    deployments.length / (pullRequests.length > 0 ? 30 : 1) : 0; // 가정: 30일 기간
-  
-  // 변경 실패율 계산
-  const failedDeployments = deployments.filter(d => d.has_issues);
-  const changeFailureRate = deployments.length > 0 ?
-    failedDeployments.length / deployments.length : 0;
-  
-  // PR 사이클 타임 계산
-  let totalPrCycleTime = 0;
-  let prWithMergeTime = 0;
-  
-  for (const pr of pullRequests) {
-    if (pr.merged_at) {
-      const createdAt = new Date(pr.created_at).getTime();
-      const mergedAt = new Date(pr.merged_at).getTime();
-      totalPrCycleTime += (mergedAt - createdAt);
-      prWithMergeTime++;
-    }
-  }
-  
-  const avgPRCycleTime = prWithMergeTime > 0 ? totalPrCycleTime / prWithMergeTime : 0;
-  
-  // 평균 첫 리뷰 시간 계산
-  let totalTimeToFirstReview = 0;
-  let prsWithReviews = 0;
-  
-  for (const pr of pullRequests) {
-    const reviews = prDetails[pr.number]?.reviews || [];
-    
-    if (reviews.length > 0) {
-      // 제출 시간을 기준으로 리뷰 정렬
-      reviews.sort((a, b) => {
-        const aDate = new Date(a.submitted_at || 0).getTime();
-        const bDate = new Date(b.submitted_at || 0).getTime();
-        return aDate - bDate;
-      });
-      
-      // 가장 빠른 리뷰와 PR 생성 시간의 차이 계산
-      const createdAt = new Date(pr.created_at).getTime();
-      const firstReviewTime = new Date(reviews[0].submitted_at || 0).getTime();
-      const timeToFirstReview = (firstReviewTime - createdAt) / (1000 * 60); // 분 단위
-      
-      if (timeToFirstReview > 0) {
-        totalTimeToFirstReview += timeToFirstReview;
-        prsWithReviews++;
-      }
-    }
-  }
-  
-  const avgTimeToFirstReview = prsWithReviews > 0 ? Math.round(totalTimeToFirstReview / prsWithReviews) : 0;
-  
-  // 평균 병합 시간 계산
-  let totalTimeToMerge = 0;
-  
-  for (const pr of pullRequests) {
-    if (pr.merged_at) {
-      const createdAt = new Date(pr.created_at).getTime();
-      const mergedAt = new Date(pr.merged_at).getTime();
-      totalTimeToMerge += (mergedAt - createdAt) / (1000 * 60); // 분 단위
-    }
-  }
-  
-  const avgTimeToMerge = prWithMergeTime > 0 ? Math.round(totalTimeToMerge / prWithMergeTime) : 0;
-  
-  return {
-    commitCount,
-    prCount,
-    prMergedCount,
-    reviewCount,
-    contributorCount: contributors.size,
-    totalAdditions,
-    totalDeletions,
-    avgTimeToFirstReview,
-    avgTimeToMerge,
-    avgPRCycleTime,
-    deploymentFrequency,
-    changeFailureRate,
-    dailyMetrics
-  };
-} */
 
 /**
  * 팀 일별 메트릭스 계산

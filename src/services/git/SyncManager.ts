@@ -1,11 +1,14 @@
 import { RepositoryInfo } from './IGitServiceAdapter';
 import { getDB } from '../../db/index.js';
 import { schemaToUse as schema } from '../../db/index.js';
-import { eq, count } from 'drizzle-orm';
+import { eq } from 'drizzle-orm';
 import { GitHubApiCollector, GitHubApiSettings } from '../github/GitHubApiCollector.js';
 import { logger } from '../../utils/logger.js';
 import { SettingsService } from '../../api/server/settings-service.js';
 import { GitHubDataCollector } from './services/github/GitHubDataCollector.js';
+import { sql } from 'drizzle-orm';
+import { PostgresSettingsRepository } from '../../repositories/implementations/PostgresSettingsRepository.js';
+import { PostgresRepositoryInfoRepository } from '../../repositories/implementations/PostgresRepositoryInfoRepository.js';
 
 /**
  * 시스템 설정 인터페이스
@@ -60,14 +63,14 @@ export interface SyncProgress {
 export class SyncManager {
   private githubApiCollector: GitHubApiCollector;
   private settingsService: SettingsService;
-  private basePath: string;
+  // private basePath: string;
   private systemSettings: SystemSettings = {};
   private syncProgress: SyncProgress;
   
   constructor() {
     this.githubApiCollector = new GitHubApiCollector();
     this.settingsService = new SettingsService();
-    this.basePath = './repos'; // 기본값 설정
+    // this.basePath = './repos'; // 기본값 설정
     
     // 동기화 진행 상황 초기화
     this.syncProgress = {
@@ -85,6 +88,17 @@ export class SyncManager {
     
     // 설정 로드
     this.loadSettings();
+  }
+  
+  /**
+   * 데이터베이스 인스턴스를 반환합니다.
+   */
+  private async getDb() {
+    const db = getDB();
+    if (!db) {
+      throw new Error('데이터베이스가 초기화되지 않았습니다.');
+    }
+    return db;
   }
   
   /**
@@ -131,19 +145,21 @@ export class SyncManager {
       );
       
       const count = parseInt(result[0].count);
+      const settingsJson = JSON.stringify(settings);
       
       if (count > 0) {
-        // 기존 설정 업데이트
-        await getDB().execute(
-          `UPDATE system_settings SET value = $1, updated_at = NOW() WHERE key = 'default_settings'`,
-          [JSON.stringify(settings)]
-        );
+        // 기존 설정 업데이트 - parameterized query 방식 변경
+        await getDB().execute(sql`
+          UPDATE system_settings 
+          SET value = ${settingsJson}, updated_at = NOW() 
+          WHERE key = 'default_settings'
+        `);
       } else {
-        // 새 설정 삽입
-        await getDB().execute(
-          `INSERT INTO system_settings (key, value) VALUES ('default_settings', $1)`,
-          [JSON.stringify(settings)]
-        );
+        // 새 설정 삽입 - parameterized query 방식 변경
+        await getDB().execute(sql`
+          INSERT INTO system_settings (key, value) 
+          VALUES ('default_settings', ${settingsJson})
+        `);
       }
       
       logger.info('시스템 설정이 DB에 저장되었습니다.');
@@ -186,11 +202,11 @@ export class SyncManager {
       }
       
       // 저장소 경로 설정
-      this.basePath = this.systemSettings.defaultPaths?.repoStorage || './repos';
-      logger.info(`저장소 기본 경로: ${this.basePath}`);
+      // this.basePath = this.systemSettings.defaultPaths?.repoStorage || './repos';
+      
     } catch (error) {
       logger.error('기본 설정 초기화 중 오류 발생:', error);
-      this.basePath = './repos'; // 오류 발생 시 기본값 사용
+      // this.basePath = './repos'; // 오류 발생 시 기본값 사용
     }
   }
   
@@ -204,21 +220,47 @@ export class SyncManager {
       
       // GitHub 설정 로드
       const githubSettings = await this.settingsService.getGitHubSettings();
+      logger.info('GitHub 설정 로드됨:', githubSettings);
       
-      if (githubSettings) {
-        logger.info('GitHub 설정을 로드하여 API 클라이언트에 적용합니다.');
-        
+      if (githubSettings && githubSettings.token) {
         const apiSettings: GitHubApiSettings = {
           token: githubSettings.token,
-          enterpriseUrl: githubSettings.enterpriseUrl
+          enterpriseUrl: undefined
         };
         
         // GitHub API 클라이언트 설정 업데이트
         this.githubApiCollector.updateSettings(apiSettings);
+        logger.info('GitHub 설정이 적용됨 :', { token: apiSettings.token ? '설정됨' : '없음' });
+      } else {
+        logger.warn('GitHub 토큰이 설정되지 않았습니다.');
+      }
+      
+      // GitHub Enterprise 설정 로드
+      const githubEnterpriseSettings = await this.settingsService.getGitHubEnterpriseSettings();
+      logger.info('GitHub Enterprise 설정 로드됨:', githubEnterpriseSettings);
+      
+      if (githubEnterpriseSettings && githubEnterpriseSettings.enterpriseToken) {
+        const enterpriseApiSettings: GitHubApiSettings = {
+          token: githubEnterpriseSettings.enterpriseToken,
+          enterpriseUrl: githubEnterpriseSettings.enterpriseUrl
+        };
+        
+        // GitHub Enterprise 설정이 있는 경우만 업데이트
+        if (enterpriseApiSettings.token && enterpriseApiSettings.enterpriseUrl) {
+          // GitHub Enterprise 설정 업데이트
+          this.githubApiCollector.updateSettings(enterpriseApiSettings);
+          logger.info('GitHub Enterprise 설정이 적용됨 :', { 
+            token: enterpriseApiSettings.token ? '설정됨' : '없음',
+            url: enterpriseApiSettings.enterpriseUrl || '없음'
+          });
+        } else {
+          logger.warn('GitHub Enterprise 설정이 불완전합니다. token 또는 enterpriseUrl이 누락되었습니다.');
+        }
+      } else {
+        logger.warn('GitHub Enterprise 토큰이 설정되지 않았습니다.');
       }
     } catch (error) {
       logger.error('설정 로드 중 오류 발생:', error);
-      logger.info('환경 변수의 기본 설정을 사용합니다.');
     }
   }
   
@@ -262,20 +304,79 @@ export class SyncManager {
         logger.info(`전체 동기화 모드: 저장소 [${repoInfo.fullName}]의 마지막 동기화 시간 초기화됨`);
       }
       
-      // 2. API 토큰 확인
-      const apiToken = repoInfo.apiToken;
-      if (!apiToken) {
-        logger.warn(`저장소 [${repoInfo.fullName}]에 API 토큰이 설정되지 않았습니다. 인증 없이 진행합니다.`);
+      // 2. 저장소 타입에 따른 API 토큰 선택
+      let apiToken: string | undefined;
+      let apiUrl: string | undefined = repoInfo.apiUrl;
+      
+      if (repoInfo.type === 'github-enterprise') {
+        // GitHub Enterprise의 경우 enterprise 설정에서 토큰 가져오기
+        const githubEnterpriseSettings = await this.settingsService.getGitHubEnterpriseSettings();
+        logger.info(`GitHub Enterprise 저장소 [${repoInfo.fullName}] 처리 - Enterprise 설정 로드됨`);
+        
+        if (!githubEnterpriseSettings.enterpriseToken) {
+          const errorMessage = `GitHub Enterprise 토큰이 설정되지 않았습니다. 설정 페이지에서 Enterprise 토큰을 확인하세요.`;
+          logger.error(errorMessage);
+          result.success = false;
+          result.message = errorMessage;
+          result.errors.push(errorMessage);
+          result.endTime = new Date();
+          return result;
+        }
+        
+        apiToken = githubEnterpriseSettings.enterpriseToken;
+        // apiUrl이 없는 경우 설정에서 가져옴
+        if (!apiUrl && githubEnterpriseSettings.enterpriseUrl) {
+          apiUrl = githubEnterpriseSettings.enterpriseUrl;
+        }
+        
+        logger.info(`GitHub Enterprise 저장소 [${repoInfo.fullName}] - Enterprise 토큰 사용`);
+      } else if (repoInfo.type === 'github') {
+        // 일반 GitHub 저장소의 경우 GitHub 설정에서 토큰 가져오기
+        const githubSettings = await this.settingsService.getGitHubSettings();
+        
+        // 저장소에 토큰이 있으면 그것을 우선 사용, 없으면 전역 설정 사용
+        apiToken = repoInfo.apiToken || githubSettings.token;
+        
+        // apiUrl이 없으면 기본 GitHub API URL 사용
+        if (!apiUrl) {
+          apiUrl = 'https://api.github.com';
+        }
+        
+        logger.info(`GitHub 저장소 [${repoInfo.fullName}] - GitHub 토큰 사용`);
+      } else {
+        // 다른 타입의 저장소는 저장소 설정의 토큰 사용
+        apiToken = repoInfo.apiToken;
       }
       
-      // 3. 데이터 수집기 초기화
-      const collector = new GitHubDataCollector(repoId, apiToken, repoInfo.apiUrl);
+      if (!apiToken) {
+        logger.warn(`저장소 [${repoInfo.fullName}]에 API 토큰이 설정되지 않았습니다. 인증 없이 진행합니다.`);
+      } else {
+        logger.info(`저장소 [${repoInfo.fullName}]에 API 토큰이 설정되어 있습니다.`);
+      }
       
-      // 4. 데이터 동기화 실행
+      // 3. API URL 확인
+      logger.info(`저장소 [${repoInfo.fullName}] API URL: ${apiUrl || 'default'}`);
+      
+      // 4. 데이터 수집기 초기화
+      logger.info(`저장소 [${repoInfo.fullName}] 데이터 수집기 초기화 - API Token: ${apiToken ? '설정됨' : '없음'}, API URL: ${apiUrl || 'default'}`);
+      
+      // 데이터 액세스 레포지토리 생성
+      const settingsRepository = new PostgresSettingsRepository();
+      const repositoryInfoRepository = new PostgresRepositoryInfoRepository();
+      
+      const collector = new GitHubDataCollector(
+        settingsRepository,
+        repositoryInfoRepository,
+        repoId, 
+        apiToken, 
+        apiUrl
+      );
+      
+      // 5. 데이터 동기화 실행
       logger.info(`저장소 [${repoInfo.fullName}] 데이터 수집 시작`);
       const syncResult = await collector.syncAll();
       
-      // 5. 결과 설정
+      // 6. 결과 설정
       result.commitCount = syncResult.commitCount;
       result.pullRequestCount = syncResult.pullRequestCount;
       result.reviewCount = syncResult.reviewCount;
@@ -538,29 +639,45 @@ export class SyncManager {
   /**
    * 데이터가 없는 저장소 목록 조회
    */
-  async getRepositoriesWithoutData() {
+  async getRepositoriesWithoutData(): Promise<RepositoryInfo[]> {
     try {
-      const repositories = await this.getAllRepositories();
+      const db = await this.getDb();
       
-      // 데이터가 없는 저장소 필터링
-      const reposWithoutData = [];
-      
-      for (const repo of repositories) {
-        // 커밋 수 조회
-        const commitCount = await getDB()
-          .select({ count: count() })
-          .from(schema.commits)
-          .where(eq(schema.commits.repositoryId, repo.id));
+      try {
+        // commit 정보가 없는 저장소 확인
+        const repositories = await db.execute(
+          sql`SELECT r.* FROM repositories r
+              LEFT JOIN (
+                SELECT repository_id, COUNT(*) as commit_count
+                FROM commits
+                GROUP BY repository_id
+              ) c ON r.id = c.repository_id
+              WHERE c.commit_count IS NULL OR c.commit_count = 0`
+        );
+
+        return repositories.map((repo: any) => ({
+          id: repo.id,
+          name: repo.name,
+          fullName: repo.full_name,
+          cloneUrl: repo.clone_url,
+          type: repo.type
+        }));
+      } catch (error) {
+        // sync_history 테이블이 존재하지 않거나 SQL 실행 중 오류 발생
+        logger.warn('데이터가 없는 저장소 조회 중 DB 오류 발생:', error);
         
-        // 커밋이 없으면 데이터가 없는 것으로 간주
-        if (commitCount[0].count === 0) {
-          reposWithoutData.push(repo);
+        // 테이블이 존재하지 않는 경우 모든 저장소를 반환
+        if (error instanceof Error && 
+            (error.message.includes('no such table') || 
+             error.message.includes('relation') && error.message.includes('does not exist'))) {
+          logger.warn('sync_history 테이블이 존재하지 않아 모든 저장소를 반환합니다.');
+          return this.getAllRepositories();
         }
+        
+        throw error; // 다른 오류는 상위로 전파
       }
-      
-      return reposWithoutData;
     } catch (error) {
-      logger.error('데이터가 없는 저장소 조회 중 오류 발생:', error);
+      logger.error('데이터가 없는 저장소 목록 조회 중 오류 발생:', error);
       throw error;
     }
   }

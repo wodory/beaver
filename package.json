@@ -30,6 +30,7 @@
     "test:github": "tsx src/tests/github-api-test.ts",
     "test:github-sync": "tsx src/tests/github-sync-test.ts",
     "test:sync": "tsx src/tests/sync-manager-test.ts",
+    "test:sync-history": "tsx src/tests/sync-history-test.ts",
     "test:metrics": "tsx src/tests/metrics-test.ts",
     "test:worker": "tsx src/tests/worker-manager-test.ts",
     "test:timeline-chart": "tsx src/tests/timeline-chart-test.tsx",
@@ -38,7 +39,8 @@
     "check-db": "node src/scripts/check-db.cjs",
     "init-settings": "node src/scripts/init-settings-db.cjs",
     "init-accounts-settings": "node --loader=ts-node/esm src/scripts/init-accounts-settings.js",
-    "init-accounts-with-examples": "node --loader=ts-node/esm src/scripts/init-accounts-settings.js --add-examples"
+    "init-accounts-with-examples": "node --loader=ts-node/esm src/scripts/init-accounts-settings.js --add-examples",
+    "test:github-accounts": "tsx src/tests/github-accounts-test.ts"
   },
   "dependencies": {
     "@fastify/cors": "^11.0.0",
@@ -50,6 +52,7 @@
     "@radix-ui/react-dropdown-menu": "^2.1.6",
     "@radix-ui/react-label": "^2.1.2",
     "@radix-ui/react-popover": "^1.1.6",
+    "@radix-ui/react-progress": "^1.1.2",
     "@radix-ui/react-scroll-area": "^1.2.3",
     "@radix-ui/react-select": "^2.1.6",
     "@radix-ui/react-separator": "^1.1.2",
@@ -92,6 +95,7 @@
     "@types/react": "^19.0.10",
     "@types/react-dom": "^19.0.4",
     "@vitejs/plugin-react": "^4.3.4",
+    "@vitest/coverage-v8": "3.0.8",
     "autoprefixer": "^10.4.21",
     "concurrently": "^9.1.2",
     "drizzle-kit": "^0.30.5",

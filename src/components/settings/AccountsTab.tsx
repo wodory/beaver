@@ -265,7 +265,7 @@ export function AccountsTab() {
       
       const data = await response.json();
       
-      if (data.success) {
+      if (response.ok && data.status === 'started') {
         toast.success(`저장소 데이터 수집이 시작되었습니다.`);
         
         // 약간의 딜레이 후에 로딩 상태 해제
@@ -276,7 +276,19 @@ export function AccountsTab() {
           }));
         }, 2000);
       } else {
-        toast.error(`데이터 수집 실패: ${data.message}`);
+        // GitHub Enterprise VPN 연결 필요 오류 검사
+        if (data.message && data.message.includes('사내망(VPN) 연결이 필요합니다')) {
+          toast.error('GitHub Enterprise 서버에 접근할 수 없습니다. 사내망(VPN) 연결이 필요합니다.', {
+            duration: 5000,
+            action: {
+              label: '확인',
+              onClick: () => console.log('VPN 연결 필요 확인')
+            }
+          });
+        } else {
+          toast.error(`데이터 수집 실패: ${data.message || '알 수 없는 오류'}`);
+        }
+        
         setRepoDataState(prev => ({
           ...prev,
           [repoId]: { ...prev[repoId], loading: false }
@@ -284,7 +296,17 @@ export function AccountsTab() {
       }
     } catch (error) {
       console.error('저장소 데이터 동기화 중 오류 발생:', error);
-      toast.error('저장소 데이터 동기화 중 오류가 발생했습니다.');
+      
+      // 오류 메시지에서 VPN 연결 필요 문구 체크
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      if (errorMessage.includes('사내망(VPN)') || errorMessage.includes('Enterprise 서버')) {
+        toast.error('GitHub Enterprise 서버에 접근할 수 없습니다. 사내망(VPN) 연결이 필요합니다.', {
+          duration: 5000
+        });
+      } else {
+        toast.error('저장소 데이터 동기화 중 오류가 발생했습니다.');
+      }
+      
       setRepoDataState(prev => ({
         ...prev,
         [repoId]: { ...prev[repoId], loading: false }

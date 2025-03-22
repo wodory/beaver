@@ -9,6 +9,7 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import { dirname } from 'path';
 import { config } from 'dotenv';
+import { ConsoleLogWriter } from 'drizzle-orm';
 
 // ES 모듈에서 __dirname 대체
 const __filename = fileURLToPath(import.meta.url);
@@ -61,6 +62,9 @@ async function updateGitHubSettings() {
     const githubToken = process.env.GITHUB_TOKEN || '';
     const githubEnterpriseUrl = process.env.GITHUB_ENTERPRISE_URL || '';
     const githubEnterpriseToken = process.env.GITHUB_ENTERPRISE_TOKEN || '';
+
+    console.log('엔터프라이즈 정보 - URL', githubEnterpriseUrl);
+    console.log('엔터프라이즈 정보 - Token', githubEnterpriseToken);
     
     // 저장소 리스트 파싱 (보통 공백이나 줄바꿈으로 구분된 목록)
     const reposEnv = process.env.GITHUB_REPOSITORIES || '';

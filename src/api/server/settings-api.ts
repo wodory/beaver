@@ -3,12 +3,11 @@
  */
 import { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 import { SettingsService } from './settings-service.js';
-import { UserSettings, GitHubSettings, JiraSettings, AccountsSettings } from '../../types/settings.js';
+import { UserSettings, GitHubSettings, GitHubEnterpriseSettings, JiraSettings, AccountsSettings } from '../../types/settings.js';
 import { getDB } from '../../db/index.js';
 import { schemaToUse as schema } from '../../db/index.js';
 import { eq, count } from 'drizzle-orm';
 import { SyncManager } from '../../services/git/SyncManager.js';
-import { GitHubDataCollector } from '../../services/git/services/github/GitHubDataCollector.js';
 import { logger } from '../../utils/logger.js';
 
 // 기본 사용자 ID (현재는 단일 사용자 시스템)
@@ -161,19 +160,87 @@ async function syncRepositoryData(repoId: number, apiToken?: string, apiUrl?: st
   try {
     logger.info(`저장소 ID ${repoId} 데이터 동기화 시작`);
     
-    // GitHubDataCollector를 직접 사용하여 데이터 수집
-    const collector = new GitHubDataCollector(
-      repoId,
-      apiToken,
-      apiUrl
-    );
+    // 동기화 시작 시간 기록
+    const startTime = new Date();
     
-    const result = await collector.syncAll();
+    // 저장소 정보 확인
+    const db = getDB();
+    const repository = await db.query.repositories.findFirst({
+      where: eq(schema.repositories.id, repoId)
+    });
     
-    logger.info(`저장소 ID ${repoId} 데이터 동기화 완료: ${result.commitCount}개의 커밋, ${result.pullRequestCount}개의 PR, ${result.reviewCount}개의 리뷰 수집됨`);
+    if (!repository) {
+      logger.error(`저장소 ID ${repoId}을 찾을 수 없습니다.`);
+      return;
+    }
+    
+    // API URL과 토큰 확인 (명시적으로 전달된 것이 없으면 저장소에서 가져옴)
+    const tokenToUse = apiToken || repository.apiToken;
+    const urlToUse = apiUrl || repository.apiUrl;
+    
+    // 토큰이 없는 경우 로그 남김
+    if (!tokenToUse) {
+      logger.warn(`저장소 ID ${repoId} (${repository.fullName}) 동기화 시 API 토큰이 설정되지 않았습니다.`);
+    }
+    
+    if (urlToUse) {
+      logger.info(`저장소 ID ${repoId} API URL: ${urlToUse}`);
+    }
+    
+    // 동기화 이력 레코드 생성
+    try {
+      await db.execute(`
+        INSERT INTO sync_history (repository_id, start_time, status, created_at)
+        VALUES ($1, $2, 'running', $3)
+      `, [repoId, startTime.toISOString(), new Date().toISOString()]);
+      
+      logger.info(`저장소 ID ${repoId} 동기화 이력 생성 완료`);
+    } catch (historyError) {
+      // 동기화 이력 테이블이 없는 경우 오류 로그만 남기고 계속 진행
+      logger.error(`저장소 ID ${repoId} 동기화 이력 생성 실패:`, historyError);
+    }
+    
+    // 동기화 관리자 초기화
+    const syncManager = new SyncManager();
+    
+    // 동기화 실행
+    try {
+      await syncManager.syncRepository(repoId);
+      logger.info(`저장소 ID ${repoId} 동기화 완료`);
+      
+      // 동기화 이력 업데이트
+      try {
+        await db.execute(`
+          UPDATE sync_history 
+          SET status = 'completed', end_time = $1, updated_at = $1
+          WHERE repository_id = $2 
+          AND status = 'running'
+          ORDER BY created_at DESC
+          LIMIT 1
+        `, [new Date().toISOString(), repoId]);
+      } catch (updateError) {
+        logger.error(`저장소 ID ${repoId} 동기화 이력 업데이트 실패:`, updateError);
+      }
+    } catch (syncError) {
+      logger.error(`저장소 ID ${repoId} 데이터 동기화 중 오류 발생:`, syncError);
+      
+      // 동기화 이력 오류 상태로 업데이트
+      try {
+        const errorMessage = syncError instanceof Error ? syncError.message : String(syncError);
+        await db.execute(`
+          UPDATE sync_history 
+          SET status = 'failed', end_time = $1, updated_at = $1, error = $2
+          WHERE repository_id = $3 
+          AND status = 'running'
+          ORDER BY created_at DESC
+          LIMIT 1
+        `, [new Date().toISOString(), errorMessage, repoId]);
+      } catch (updateError) {
+        logger.error(`저장소 ID ${repoId} 동기화 이력 오류 업데이트 실패:`, updateError);
+      }
+    }
   } catch (error) {
     logger.error(`저장소 ID ${repoId} 데이터 동기화 중 오류 발생:`, error);
-    throw error;
   }
 }
 
@@ -300,6 +367,41 @@ export async function settingsRoutes(fastify: FastifyInstance) {
   });
 
   /**
+   * GitHub Enterprise 설정 조회 API
+   */
+  fastify.get('/api/settings/github-enterprise/:userId?', async (request: FastifyRequest<{Params: IdParams}>, reply: FastifyReply) => {
+    try {
+      const userId = request.params.userId ? parseInt(request.params.userId) : DEFAULT_USER_ID;
+      const settings = await settingsService.getGitHubEnterpriseSettings(userId);
+      return reply.send(settings);
+    } catch (error) {
+      console.error('GitHub Enterprise 설정 조회 API 오류:', error);
+      return reply.status(500).send({ error: 'GitHub Enterprise 설정을 불러올 수 없습니다.' });
+    }
+  });
+
+  /**
+   * GitHub Enterprise 설정 업데이트 API
+   */
+  fastify.post('/api/settings/github-enterprise/:userId?', async (request: FastifyRequest<{Params: IdParams, Body: Partial<GitHubEnterpriseSettings>}>, reply: FastifyReply) => {
+    try {
+      const userId = request.params.userId ? parseInt(request.params.userId) : DEFAULT_USER_ID;
+      const settings = request.body;
+      const success = await settingsService.updateGitHubEnterpriseSettings(settings, userId);
+      
+      if (success) {
+        const updatedSettings = await settingsService.getGitHubEnterpriseSettings(userId);
+        return reply.send(updatedSettings);
+      } else {
+        return reply.status(500).send({ error: 'GitHub Enterprise 설정을 업데이트할 수 없습니다.' });
+      }
+    } catch (error) {
+      console.error('GitHub Enterprise 설정 업데이트 API 오류:', error);
+      return reply.status(500).send({ error: 'GitHub Enterprise 설정을 업데이트할 수 없습니다.' });
+    }
+  });
+
+  /**
    * Jira 설정 조회 API
    */
   fastify.get('/api/settings/jira/:userId?', async (request: FastifyRequest<{Params: IdParams}>, reply: FastifyReply) => {
@@ -340,18 +442,36 @@ export async function settingsRoutes(fastify: FastifyInstance) {
   fastify.get('/api/settings/repositories/without-data', async (_, reply) => {
     try {
       const syncManager = new SyncManager();
-      const repositories = await syncManager.getRepositoriesWithoutData();
-      
-      return {
-        success: true,
-        repositories: repositories.map((repo: any) => ({
-          id: repo.id,
-          name: repo.name,
-          fullName: repo.fullName,
-          cloneUrl: repo.cloneUrl,
-          type: repo.type
-        }))
-      };
+      try {
+        const repositories = await syncManager.getRepositoriesWithoutData();
+        
+        return {
+          success: true,
+          repositories: repositories.map((repo: any) => ({
+            id: repo.id,
+            name: repo.name,
+            fullName: repo.fullName,
+            cloneUrl: repo.cloneUrl,
+            type: repo.type
+          }))
+        };
+      } catch (error) {
+        // sync_history 테이블이 없는 경우나 다른 DB 오류 처리
+        logger.warn('저장소 데이터 조회 중 오류 발생, 모든 저장소를 반환합니다:', error);
+        
+        // 대체 방법: 모든 저장소 반환
+        const allRepositories = await syncManager.getAllRepositories();
+        return {
+          success: true,
+          repositories: allRepositories.map((repo: any) => ({
+            id: repo.id,
+            name: repo.name,
+            fullName: repo.fullName,
+            cloneUrl: repo.cloneUrl,
+            type: repo.type
+          }))
+        };
+      }
     } catch (error) {
       logger.error('데이터가 없는 저장소 목록 조회 중 오류 발생:', error);
       return reply.code(500).send({
@@ -500,6 +620,113 @@ export async function settingsRoutes(fastify: FastifyInstance) {
     } catch (error) {
       logger.error('저장소 데이터 동기화 요청 중 오류 발생:', error);
       return reply.status(500).send({ error: '저장소 데이터 동기화를 시작할 수 없습니다.' });
+    }
+  });
+
+  /**
+   * 저장소 동기화 이력 조회 API
+   */
+  fastify.get('/api/settings/repositories/:id/sync-history', async (request: FastifyRequest<{
+    Params: { id: string }
+  }>, reply) => {
+    try {
+      const repoId = parseInt(request.params.id, 10);
+      
+      // DB에서 저장소 정보 조회
+      const db = getDB();
+      const repository = await db.query.repositories.findFirst({
+        where: eq(schema.repositories.id, repoId)
+      });
+      
+      if (!repository) {
+        return reply.code(404).send({
+          success: false,
+          message: `저장소 ID ${repoId}를 찾을 수 없습니다.`
+        });
+      }
+      
+      // 동기화 이력 조회 (최근 10개)
+      const history = await db.execute(`
+        SELECT 
+          id,
+          repository_id as "repositoryId",
+          start_time as "startTime",
+          end_time as "endTime",
+          status,
+          commit_count as "commitCount",
+          pull_request_count as "pullRequestCount",
+          review_count as "reviewCount",
+          error,
+          created_at as "createdAt"
+        FROM sync_history
+        WHERE repository_id = $1
+        ORDER BY created_at DESC
+        LIMIT 10
+      `, [repoId]);
+      
+      return {
+        success: true,
+        repository: {
+          id: repository.id,
+          name: repository.name,
+          fullName: repository.fullName
+        },
+        history
+      };
+    } catch (error) {
+      logger.error('동기화 이력 조회 중 오류 발생:', error);
+      return reply.code(500).send({
+        success: false,
+        message: `동기화 이력 조회 중 오류 발생: ${error instanceof Error ? error.message : String(error)}`
+      });
+    }
+  });
+
+  /**
+   * 모든 저장소의 최근 동기화 이력 조회 API
+   */
+  fastify.get('/api/settings/repositories/sync-history', async (_, reply) => {
+    try {
+      const db = getDB();
+      
+      // 각 저장소별 최근 동기화 이력 조회
+      const history = await db.execute(`
+        WITH latest_history AS (
+          SELECT 
+            repository_id,
+            MAX(created_at) as latest_date
+          FROM sync_history
+          GROUP BY repository_id
+        )
+        SELECT 
+          sh.id,
+          sh.repository_id as "repositoryId",
+          r.name as "repositoryName",
+          r.full_name as "repositoryFullName",
+          sh.start_time as "startTime",
+          sh.end_time as "endTime",
+          sh.status,
+          sh.commit_count as "commitCount",
+          sh.pull_request_count as "pullRequestCount",
+          sh.review_count as "reviewCount",
+          sh.error,
+          sh.created_at as "createdAt"
+        FROM sync_history sh
+        JOIN latest_history lh ON sh.repository_id = lh.repository_id AND sh.created_at = lh.latest_date
+        JOIN repositories r ON sh.repository_id = r.id
+        ORDER BY sh.created_at DESC
+      `);
+      
+      return {
+        success: true,
+        history
+      };
+    } catch (error) {
+      logger.error('모든 저장소 동기화 이력 조회 중 오류 발생:', error);
+      return reply.code(500).send({
+        success: false,
+        message: `동기화 이력 조회 중 오류 발생: ${error instanceof Error ? error.message : String(error)}`
+      });
     }
   });
 }

@@ -3,7 +3,7 @@
  * 
  * 설정을 서버에서 가져오고 저장하는 API 함수들을 제공합니다.
  */
-import { UserSettings, GitHubSettings, JiraSettings, AccountsSettings, Account, Repository } from '../types/settings';
+import { UserSettings, GitHubSettings, GitHubEnterpriseSettings, JiraSettings, AccountsSettings, Account, Repository } from '../types/settings';
 
 // API 기본 URL
 const API_BASE_URL = import.meta.env.DEV ? 'http://localhost:3001/api' : '/api';
@@ -186,6 +186,42 @@ export async function updateGitHubSettings(settings: Partial<GitHubSettings>): P
   } catch (error) {
     console.error('GitHub 설정 업데이트 실패:', error);
     throw new Error('GitHub 설정을 업데이트하는 데 실패했습니다: ' + (error instanceof Error ? error.message : '알 수 없는 오류'));
+  }
+}
+
+/**
+ * GitHub Enterprise 설정을 가져옵니다.
+ */
+export async function fetchGitHubEnterpriseSettings(): Promise<GitHubEnterpriseSettings> {
+  try {
+    const settings = await apiRequest<GitHubEnterpriseSettings>('/settings/github-enterprise');
+    return settings;
+  } catch (error) {
+    console.error('GitHub Enterprise 설정 로드 실패:', error);
+    return { 
+      enterpriseToken: '', 
+      enterpriseUrl: '', 
+      enterpriseOrganization: '', 
+      organization: '', 
+      repositories: [] 
+    };
+  }
+}
+
+/**
+ * GitHub Enterprise 설정을 업데이트합니다.
+ */
+export async function updateGitHubEnterpriseSettings(settings: Partial<GitHubEnterpriseSettings>): Promise<GitHubEnterpriseSettings> {
+  try {
+    const updatedSettings = await apiRequest<GitHubEnterpriseSettings>('/settings/github-enterprise', {
+      method: 'POST',
+      body: JSON.stringify(settings),
+    });
+    
+    return updatedSettings;
+  } catch (error) {
+    console.error('GitHub Enterprise 설정 업데이트 실패:', error);
+    throw new Error('GitHub Enterprise 설정을 업데이트하는 데 실패했습니다: ' + (error instanceof Error ? error.message : '알 수 없는 오류'));
   }
 }
 

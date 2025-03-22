@@ -11,4 +11,5 @@ export * from './pullRequests.js';
 export * from './reviews.js';
 export * from './teams.js';
 export * from './metricCache.js';
-export * from './jiraIssues.js'; 
+export * from './jiraIssues.js';
+export * from './syncHistory.js'; 

@@ -28,11 +28,9 @@ async function testGraphQLCollector(repositoryId: number): Promise<void> {
     
     logger.info(`저장소 정보: ${repository.fullName}`);
     
-    // GraphQL 컬렉터 초기화
-    const collector = new GitHubDataCollector(
-      repositoryId,
-      repository.apiToken
-    );
+    // GraphQL 컬렉터 초기화 - 새로운 팩토리 메서드 사용
+    logger.info(`저장소 ID ${repositoryId}에 대한 GitHubDataCollector 생성 중...`);
+    const collector = await GitHubDataCollector.createForRepository(repositoryId);
     
     // 커밋 수집 테스트
     logger.info(`커밋 데이터 수집 시작`);

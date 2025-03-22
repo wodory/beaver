@@ -1,5 +1,4 @@
-import { sqliteTable, integer, text } from 'drizzle-orm/sqlite-core';
-import { sql } from 'drizzle-orm';
+import { sqliteTable, integer, text, sql } from 'drizzle-orm/sqlite-core';
 import { pullRequests } from './pullRequests.js';
 import { users } from './users.js';
 
@@ -16,10 +15,6 @@ export const prReviews = sqliteTable('pr_reviews', {
     state: text('state').notNull(), // 'APPROVED' | 'CHANGES_REQUESTED' | 'COMMENTED' | 'DISMISSED'
     body: text('body'),
     submittedAt: text('submitted_at').notNull(),
-    createdAt: text('created_at').default(sql`CURRENT_TIMESTAMP`).notNull(),
-    updatedAt: text('updated_at').default(sql`CURRENT_TIMESTAMP`).notNull()
-});
-
-// 테이블 타입 정의 내보내기
-export type PRReview = typeof prReviews.$inferSelect;
-export type NewPRReview = typeof prReviews.$inferInsert; 
+    createdAt: text('created_at').notNull().default(sql`CURRENT_TIMESTAMP`),
+    updatedAt: text('updated_at').notNull().default(sql`CURRENT_TIMESTAMP`)
+}); 

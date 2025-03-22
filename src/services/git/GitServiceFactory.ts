@@ -4,6 +4,7 @@ import { GitHubEnterpriseAdapter } from './adapters/GitHubEnterpriseAdapter.js';
 import { GitLabAdapter } from './adapters/GitLabAdapter.js';
 import { MockGitHubAdapter } from './adapters/MockGitHubAdapter.js';
 import { MockGitHubEnterpriseAdapter } from './adapters/MockGitHubEnterpriseAdapter.js';
+import { logger } from '../../utils/logger.js';
 
 /**
  * Git 서비스 어댑터 생성 팩토리
@@ -45,17 +46,56 @@ export class GitServiceFactory {
 
     switch (repoInfo.type) {
       case 'github':
-        return new GitHubAdapter(repoInfo.apiToken);
+        return this.createGitHubAdapter(repoInfo);
       case 'github-enterprise':
-        if (!repoInfo.apiUrl) {
-          throw new Error('GitHub Enterprise 어댑터를 위해서는 apiUrl이 필요합니다.');
-        }
-        return new GitHubEnterpriseAdapter(repoInfo.apiUrl, repoInfo.apiToken);
+        return this.createGitHubEnterpriseAdapter(repoInfo);
       case 'gitlab':
         return new GitLabAdapter(repoInfo.apiToken);
       default:
         throw new Error(`지원하지 않는 저장소 타입입니다: ${repoInfo.type}`);
     }
+  }
+
+  /**
+   * GitHub 어댑터 생성
+   * @param repoInfo 저장소 정보
+   * @returns GitHub 어댑터 인스턴스
+   */
+  private createGitHubAdapter(repoInfo: RepositoryInfo): GitHubAdapter {
+    logger.info(`GitHub 어댑터 생성: 저장소 ${repoInfo.fullName}`);
+    
+    if (!repoInfo.apiToken) {
+      logger.warn(`GitHub 저장소 ${repoInfo.fullName}에 API 토큰이 설정되지 않았습니다.`);
+    }
+    
+    return new GitHubAdapter(repoInfo.apiToken);
+  }
+  
+  /**
+   * GitHub Enterprise 어댑터 생성
+   * @param repoInfo 저장소 정보
+   * @returns GitHub Enterprise 어댑터 인스턴스
+   */
+  private createGitHubEnterpriseAdapter(repoInfo: RepositoryInfo): GitHubEnterpriseAdapter {
+    logger.info(`GitHub Enterprise 어댑터 생성: 저장소 ${repoInfo.fullName}`);
+    
+    if (!repoInfo.apiUrl) {
+      throw new Error('GitHub Enterprise 어댑터를 위해서는 apiUrl이 필요합니다.');
+    }
+    
+    // 저장소에 직접 설정된 enterpriseToken이 있으면 그것을 사용하고, 
+    // 없으면 일반 apiToken을 확인
+    const enterpriseToken = repoInfo.enterpriseToken || repoInfo.apiToken;
+    
+    // GitHub Enterprise 토큰 확인
+    if (!enterpriseToken) {
+      logger.warn(`GitHub Enterprise 저장소 ${repoInfo.fullName}에 토큰이 설정되지 않았습니다.`);
+      logger.warn('GitHub Enterprise 설정에서 토큰을 확인하거나 저장소 설정에서 토큰을 추가하세요.');
+      throw new Error('GitHub Enterprise 어댑터를 위해서는 토큰이 필요합니다.');
+    }
+    
+    logger.info(`GitHub Enterprise 어댑터 생성 완료: API URL ${repoInfo.apiUrl}`);
+    return new GitHubEnterpriseAdapter(repoInfo.apiUrl, enterpriseToken);
   }
 
   /**

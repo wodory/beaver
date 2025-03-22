@@ -1,4 +1,5 @@
 import { GitHubAdapter } from '../services/git/adapters/GitHubAdapter';
+import { GitHubEnterpriseAdapter } from '../services/git/adapters/GitHubEnterpriseAdapter';
 import { RepositoryInfo } from '../services/git/IGitServiceAdapter';
 import fs from 'fs/promises';
 import path from 'path';
@@ -90,11 +91,14 @@ async function testGitHubSync() {
       console.log(`API URL: ${repoInfo.apiUrl}`);
       console.log(`GitHub 토큰: ${repoInfo.apiToken?.substring(0, 10)}... (앞 10자리만 표시)`);
       
-      const enterpriseUrl = repoInfo.type === 'github-enterprise' 
-        ? repoInfo.apiUrl?.replace('/api/v3', '') 
-        : undefined;
-        
-      const adapter = new GitHubAdapter(repoInfo.apiToken, enterpriseUrl);
+      let adapter;
+      if (repoInfo.type === 'github-enterprise') {
+        const enterpriseUrl = repoInfo.apiUrl?.replace('/api/v3', '') || '';
+        console.log(`GitHub Enterprise URL: ${enterpriseUrl}`);
+        adapter = new GitHubEnterpriseAdapter(repoInfo.apiUrl || '', repoInfo.apiToken);
+      } else {
+        adapter = new GitHubAdapter(repoInfo.apiToken);
+      }
       
       // 1. 저장소 클론 또는 업데이트
       console.log('\n1. 저장소 클론 또는 업데이트 테스트');

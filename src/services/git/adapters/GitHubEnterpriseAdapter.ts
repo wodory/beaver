@@ -2,23 +2,30 @@ import { CommitInfo, IGitServiceAdapter, PullRequestInfo, RepositoryInfo, Review
 import simpleGit, { SimpleGit } from 'simple-git';
 import { mkdir } from 'fs/promises';
 import path from 'path';
+import { GitHubAdapter } from './GitHubAdapter.js';
+import { logger } from '../../../utils/logger.js';
+import { getDB } from '../../../db/index.js';
+import { eq } from 'drizzle-orm';
+import { repositories } from '../../../db/schema/index.js';
 
 /**
  * GitHub Enterprise 어댑터
- * 실제 GitHub Enterprise API와 통신할 때 사용할 어댑터입니다.
- * 현재는 mock 어댑터를 사용하므로 기본 구현만 제공합니다.
+ * GitHubAdapter를 상속받아 Enterprise 버전에 특화된 기능만 오버라이드
  */
-export class GitHubEnterpriseAdapter implements IGitServiceAdapter {
-  private apiUrl: string;
-  private apiToken?: string;
-
-  constructor(apiUrl: string, apiToken?: string) {
-    this.apiUrl = apiUrl;
-    this.apiToken = apiToken;
+export class GitHubEnterpriseAdapter extends GitHubAdapter {
+  /**
+   * @param apiUrl GitHub Enterprise API URL (예: https://oss.navercorp.com/api/v3)
+   * @param apiToken GitHub Enterprise 액세스 토큰
+   * @param repositoryId 선택적 저장소 ID (데이터베이스에서 조회 시 사용)
+   */
+  constructor(apiUrl: string, apiToken?: string, repositoryId?: number) {
+    super(apiToken || '', apiUrl, repositoryId);
+    logger.info(`[GitHub Enterprise] 어댑터 초기화: ${apiUrl}`);
   }
 
   /**
    * 저장소 클론 또는 업데이트
+   * Enterprise 버전 전용 로직 포함
    */
   async cloneOrUpdateRepository(repoInfo: RepositoryInfo, localPath: string): Promise<string> {
     const repoPath = path.join(localPath, repoInfo.name);
@@ -33,18 +40,19 @@ export class GitHubEnterpriseAdapter implements IGitServiceAdapter {
       
       if (isRepo) {
         // 이미 클론된 저장소면 업데이트
-        console.log(`Enterprise 저장소 ${repoInfo.fullName} 업데이트 중...`);
+        logger.info(`[GitHub Enterprise] 저장소 ${repoInfo.fullName} 업데이트 중...`);
         await git.cwd(repoPath).pull();
       } else {
         // 새로 클론
-        console.log(`Enterprise 저장소 ${repoInfo.fullName} 클론 중...`);
+        logger.info(`[GitHub Enterprise] 저장소 ${repoInfo.fullName} 클론 중...`);
         
         // 인증이 필요한 경우 토큰 사용
         let cloneUrl = repoInfo.cloneUrl;
-        if (this.apiToken && cloneUrl.startsWith('https://')) {
+        const token = this.getApiToken();
+        if (token && cloneUrl.startsWith('https://')) {
           // GitHub Enterprise URL에 토큰 추가
           const urlObj = new URL(cloneUrl);
-          cloneUrl = cloneUrl.replace(`${urlObj.origin}/`, `${urlObj.origin.replace('https://', `https://${this.apiToken}@`)}/`);
+          cloneUrl = cloneUrl.replace(`${urlObj.origin}/`, `${urlObj.origin.replace('https://', `https://${token}@`)}/`);
         }
         
         await git.clone(cloneUrl, repoPath);
@@ -52,7 +60,7 @@ export class GitHubEnterpriseAdapter implements IGitServiceAdapter {
       
       return repoPath;
     } catch (error) {
-      console.error(`Enterprise 저장소 ${repoInfo.fullName} 처리 중 오류 발생:`, error);
+      logger.error(`[GitHub Enterprise] 저장소 ${repoInfo.fullName} 처리 중 오류 발생:`, error);
       throw error;
     }
   }
@@ -91,5 +99,67 @@ export class GitHubEnterpriseAdapter implements IGitServiceAdapter {
   async collectUsers(repoInfo: RepositoryInfo): Promise<UserInfo[]> {
     console.log(`GitHub Enterprise: ${repoInfo.fullName} 저장소의 사용자 정보 수집 중...`);
     throw new Error('GitHub Enterprise API를 이용한 사용자 정보 수집은 아직 구현되지 않았습니다.');
+  }
+
+  /**
+   * 팩토리 메서드 - 저장소 ID로부터 어댑터 생성
+   */
+  static async createFromRepositoryId(repositoryId: number): Promise<GitHubEnterpriseAdapter> {
+    try {
+      const db = getDB();
+      const repository = await db.query.repositories.findFirst({
+        where: eq(repositories.id, repositoryId)
+      });
+      
+      if (!repository) {
+        throw new Error(`저장소 ID ${repositoryId}를 찾을 수 없습니다.`);
+      }
+      
+      // 저장소 타입 확인
+      if (repository.type !== 'github-enterprise') {
+        throw new Error(`저장소 ${repositoryId}는 GitHub Enterprise 타입이 아닙니다. 현재 타입: ${repository.type}`);
+      }
+      
+      // 저장소에 연결된 계정 설정 조회
+      if (!repository.settingsId) {
+        throw new Error(`저장소 ${repositoryId}에 연결된 설정이 없습니다.`);
+      }
+      
+      // 계정 설정 조회
+      const accountSettings = await db.query.settings.findFirst({
+        where: eq(db.schema.settings.id, repository.settingsId)
+      });
+      
+      if (!accountSettings) {
+        throw new Error(`저장소 ${repositoryId}에 대한 계정 설정을 찾을 수 없습니다.`);
+      }
+      
+      // 설정 데이터 파싱
+      let settingsData;
+      try {
+        settingsData = typeof accountSettings.data === 'string' 
+          ? JSON.parse(accountSettings.data) 
+          : accountSettings.data;
+      } catch (error) {
+        throw new Error(`저장소 ${repositoryId}의 계정 설정 데이터를 파싱할 수 없습니다.`);
+      }
+      
+      // GitHub Enterprise 토큰 확인
+      if (!settingsData.enterpriseToken) {
+        throw new Error(`GitHub Enterprise 토큰이 설정되지 않았습니다. 설정에서 enterpriseToken을 확인하세요.`);
+      }
+      
+      // API URL 확인
+      const apiUrl = accountSettings.apiUrl || settingsData.enterpriseUrl;
+      if (!apiUrl) {
+        throw new Error(`GitHub Enterprise URL이 설정되지 않았습니다. 설정에서 enterpriseUrl을 확인하세요.`);
+      }
+      
+      // 어댑터 생성 및 반환
+      return new GitHubEnterpriseAdapter(apiUrl + '/api/v3', settingsData.enterpriseToken, repositoryId);
+    } catch (error: any) {
+      logger.error(`GitHubEnterpriseAdapter 생성 중 오류 발생: ${error.message}`);
+      throw error;
+    }
   }
 } 

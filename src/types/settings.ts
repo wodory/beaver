@@ -67,18 +67,30 @@ export interface DomainSettings {
 }
 
 /**
- * GitHub 설정 인터페이스 (하위 호환성 유지용)
- * @deprecated 대신 Account 및 Repository 인터페이스 사용
+ * 기본 Git 호스팅 서비스 설정 인터페이스
+ * GitHub과 GitHub Enterprise의 공통 필드를 정의합니다.
  */
-export interface GitHubSettings {
-  token: string;
+export interface BaseGitHostingSettings {
   organization: string;
   repositories: string[];
-  enterpriseUrl?: string;
-  
-  // GitHub Enterprise 관련 설정
-  enterpriseToken?: string;
-  enterpriseOrganization?: string;
+}
+
+/**
+ * GitHub 설정 인터페이스
+ * 표준 GitHub 관련 설정만 포함합니다.
+ */
+export interface GitHubSettings extends BaseGitHostingSettings {
+  token: string;
+}
+
+/**
+ * GitHub Enterprise 설정 인터페이스
+ * GitHub Enterprise 전용 설정만 포함합니다.
+ */
+export interface GitHubEnterpriseSettings extends BaseGitHostingSettings {
+  enterpriseToken: string;
+  enterpriseUrl: string;
+  enterpriseOrganization: string;
   domains?: DomainSettings[];
 }
 

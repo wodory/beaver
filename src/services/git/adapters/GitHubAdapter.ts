@@ -6,7 +6,6 @@ import { getDB } from '../../../db';
 import { eq } from 'drizzle-orm';
 import { repositories } from '../../../db/schema';
 import simpleGit, { SimpleGit } from 'simple-git';
-import { mkdir } from 'fs/promises';
 import path from 'path';
 import { logger } from '../../../utils/logger.js';
 
@@ -17,6 +16,8 @@ import { logger } from '../../../utils/logger.js';
 export class GitHubAdapter implements IGitServiceAdapter {
   private apiToken?: string;
   private octokit: Octokit;
+  // graphqlWithAuth가 사용되지 않지만 향후 GraphQL 구현을 위해 유지
+  // @ts-ignore
   private graphqlWithAuth: any;
   private enterpriseUrl?: string;
   private isEnterprise: boolean;
@@ -44,7 +45,7 @@ export class GitHubAdapter implements IGitServiceAdapter {
     if (this.apiToken) {
       const graphqlOptions: any = {
         headers: {
-          authorization: `token ${this.apiToken}`
+          authorization: `Bearer ${this.apiToken}`
         }
       };
       
@@ -54,8 +55,23 @@ export class GitHubAdapter implements IGitServiceAdapter {
         graphqlOptions.baseUrl = baseUrl.includes('/api/graphql') ? baseUrl : `${baseUrl}/api/graphql`;
       }
       
+      // GraphQL 클라이언트 초기화 (향후 사용 예정)
       this.graphqlWithAuth = graphql.defaults(graphqlOptions);
     }
+  }
+
+  /**
+   * API 토큰 반환
+   */
+  getApiToken(): string | undefined {
+    return this.apiToken;
+  }
+
+  /**
+   * API URL 반환
+   */
+  getApiUrl(): string | undefined {
+    return this.enterpriseUrl;
   }
 
   /**
@@ -124,12 +140,21 @@ export class GitHubAdapter implements IGitServiceAdapter {
         try {
           logger.info(`저장소 ID ${repoInfo.id}에 대해 GraphQL API로 커밋 수집 시도`);
           
-          // GraphQL 컬렉터 초기화
-          const collector = new GitHubDataCollector(
-            repoInfo.id,
-            this.apiToken,
-            this.isEnterprise ? this.enterpriseUrl : undefined
-          );
+          // 우선 팩토리 메서드를 이용하여 GitHubDataCollector 인스턴스 생성 시도
+          let collector;
+          
+          try {
+            // 새로 구현한 생성 메서드 사용
+            collector = await GitHubDataCollector.createForRepository(repoInfo.id);
+          } catch (factoryError) {
+            logger.warn(`팩토리 메서드로 GitHubDataCollector 생성 실패, 기본 생성자 사용: ${factoryError instanceof Error ? factoryError.message : String(factoryError)}`);
+            // 기존 방식으로 컬렉터 초기화
+            collector = new GitHubDataCollector(
+              repoInfo.id,
+              this.apiToken,
+              this.isEnterprise ? this.enterpriseUrl : undefined
+            );
+          }
           
           // GraphQL로 커밋 데이터 수집 및 저장
           await collector.collectCommits();
@@ -196,10 +221,14 @@ export class GitHubAdapter implements IGitServiceAdapter {
         let additions = 0;
         let deletions = 0;
         
-        if (log.diff && log.diff.numstat) {
-          for (const stat of log.diff.numstat) {
-            additions += parseInt(stat.additions) || 0;
-            deletions += parseInt(stat.deletions) || 0;
+        // numstat 속성 확인 및 안전하게 접근
+        if (log.diff && 'numstat' in log.diff) {
+          const numstatData = (log.diff as any).numstat;
+          if (Array.isArray(numstatData)) {
+            for (const stat of numstatData) {
+              additions += parseInt(stat.additions) || 0;
+              deletions += parseInt(stat.deletions) || 0;
+            }
           }
         }
         
@@ -395,6 +424,17 @@ export class GitHubAdapter implements IGitServiceAdapter {
       
       // 상세 사용자 정보 수집을 위한 Promise 배열
       const userPromises = response.data.map(async contributor => {
+        // login이 undefined일 가능성에 대한 처리
+        if (!contributor.login) {
+          return {
+            id: contributor.id || 0,
+            login: 'unknown',
+            name: 'Unknown User',
+            email: 'unknown@example.com',
+            avatarUrl: contributor.avatar_url || ''
+          } as UserInfo;
+        }
+        
         // 사용자 상세 정보 가져오기
         const userDetail = await this.octokit.users.getByUsername({
           username: contributor.login
@@ -446,11 +486,13 @@ export class GitHubAdapter implements IGitServiceAdapter {
         throw new Error(`저장소 ${repositoryId}에 대한 유효한 토큰 설정을 찾을 수 없습니다.`);
       }
       
-      return new GitHubAdapter(
-        accountSettings.token, 
-        accountSettings.apiUrl,
-        repositoryId
-      );
+      // token과 apiUrl이 문자열인지 확인 (타입 안전성 확보)
+      const token = String(accountSettings.token);
+      
+      // apiUrl은 문자열이거나 undefined
+      const apiUrl = accountSettings.apiUrl ? String(accountSettings.apiUrl) : undefined;
+      
+      return new GitHubAdapter(token, apiUrl, repositoryId);
     } catch (error: any) {
       console.error(`GitHubAdapter 생성 중 오류 발생: ${error.message}`);
       throw error;

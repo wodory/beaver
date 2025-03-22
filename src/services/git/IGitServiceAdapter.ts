@@ -56,6 +56,7 @@ export interface RepositoryInfo {
   type: 'github' | 'gitlab' | 'github-enterprise' | 'other';
   apiUrl?: string;
   apiToken?: string;
+  enterpriseToken?: string; // GitHub Enterprise 전용 토큰
   localPath?: string | null;
   lastSyncAt?: string | Date | null;
 }

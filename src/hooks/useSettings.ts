@@ -7,10 +7,12 @@ import {
   updateUserSettingsApi, 
   fetchGitHubSettings, 
   updateGitHubSettings, 
+  fetchGitHubEnterpriseSettings,
+  updateGitHubEnterpriseSettings,
   fetchJiraSettings, 
   updateJiraSettings, 
 } from '../api/settings-api';
-import { UserSettings, GitHubSettings, JiraSettings } from '../types/settings';
+import { UserSettings, GitHubSettings, GitHubEnterpriseSettings, JiraSettings } from '../types/settings';
 
 /**
  * 사용자 설정 관리 훅
@@ -101,6 +103,61 @@ export function useGitHubSettings() {
       return true;
     } catch (err) {
       console.error('GitHub 설정 업데이트 오류:', err);
+      setError(err instanceof Error ? err : new Error('알 수 없는 오류가 발생했습니다.'));
+      return false;
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  // 컴포넌트 마운트 시 설정 불러오기
+  useEffect(() => {
+    loadSettings();
+  }, [loadSettings]);
+
+  return {
+    settings,
+    loading,
+    error,
+    loadSettings,
+    updateSettings,
+  };
+}
+
+/**
+ * GitHub Enterprise 설정 관리 훅
+ * @returns GitHub Enterprise 설정 관련 상태 및 함수
+ */
+export function useGitHubEnterpriseSettings() {
+  const [settings, setSettings] = useState<GitHubEnterpriseSettings | null>(null);
+  const [loading, setLoading] = useState<boolean>(true);
+  const [error, setError] = useState<Error | null>(null);
+
+  // 설정 불러오기
+  const loadSettings = useCallback(async () => {
+    try {
+      setLoading(true);
+      setError(null);
+      const data = await fetchGitHubEnterpriseSettings();
+      setSettings(data);
+    } catch (err) {
+      console.error('GitHub Enterprise 설정 불러오기 오류:', err);
+      setError(err instanceof Error ? err : new Error('알 수 없는 오류가 발생했습니다.'));
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  // 설정 업데이트
+  const updateSettings = useCallback(async (newSettings: Partial<GitHubEnterpriseSettings>) => {
+    try {
+      setLoading(true);
+      setError(null);
+      const updatedSettings = await updateGitHubEnterpriseSettings(newSettings);
+      setSettings(updatedSettings);
+      return true;
+    } catch (err) {
+      console.error('GitHub Enterprise 설정 업데이트 오류:', err);
       setError(err instanceof Error ? err : new Error('알 수 없는 오류가 발생했습니다.'));
       return false;
     } finally {
