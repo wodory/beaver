@@ -30,5 +30,8 @@ dist-ssr
 .env.test
 .env.production
 
+#test info
+cure_list.mdc
+
 # 예시 환경 변수 파일은 커밋 대상에 포함
 !.env.sample

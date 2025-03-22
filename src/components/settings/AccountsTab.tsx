@@ -119,35 +119,78 @@ export function AccountsTab() {
   const handleSaveRepository = async (repoData: RepositoryFormData) => {
     try {
       let success = false;
+      let repoId: number | undefined = undefined;
       
       if (currentRepository) {
         // 저장소 업데이트
-        // ID 타입 변환 처리
-        success = await updateRepository(currentRepository.id, {
-          ...repoData,
-          type: repoData.type as AccountType,
-          id: repoData.id ? parseInt(repoData.id) : undefined
-        });
+        success = await updateRepository(
+          currentRepository.id, 
+          {
+            ...repoData,
+            type: repoData.type as AccountType
+          }
+        );
         if (success) {
           toast.success("저장소가 업데이트되었습니다.");
-          // 설정 다시 로드하여 UI 갱신
-          await loadSettings();
+          repoId = parseInt(currentRepository.id);
         }
       } else {
         // 새 저장소 추가
-        // 타입 변환 처리
-        success = await addRepository({
-          ...repoData,
-          type: repoData.type as AccountType
-        });
-        if (success) {
-          toast.success("새 저장소가 추가되었습니다.");
-          // 설정 다시 로드하여 UI 갱신
-          await loadSettings();
+        success = await addRepository(
+          {
+            ...repoData,
+            type: repoData.type as AccountType
+          }
+        );
+        
+        // 새로 추가된 저장소의 ID를 얻기 위해 설정을 다시 로드
+        await loadSettings();
+        
+        // 방금 추가한 저장소 찾기
+        if (success && settings?.repositories) {
+          const addedRepo = settings.repositories.find(r => 
+            r.name === repoData.name && 
+            r.url === repoData.url
+          );
+          
+          if (addedRepo) {
+            repoId = parseInt(addedRepo.id);
+            toast.success("새 저장소가 추가되었습니다.");
+          }
         }
       }
       
-      if (!success) {
+      if (success && repoId) {
+        // 설정 다시 로드하여 UI 갱신
+        await loadSettings();
+        
+        // 저장소 데이터 자동 동기화 시작
+        try {
+          toast.info(`저장소 데이터 수집을 시작합니다...`, { duration: 3000 });
+          
+          // 저장소 데이터 상태 업데이트 - 로딩 상태로 설정
+          setRepoDataState(prev => ({
+            ...prev,
+            [repoId]: { loading: true, hasData: false }
+          }));
+          
+          // 저장소 동기화 API 호출
+          const response = await fetch(`/api/settings/repositories/${repoId}/sync`, {
+            method: 'POST'
+          });
+          
+          const data = await response.json();
+          
+          if (response.ok && data.success) {
+            toast.success(`저장소 데이터 수집이 시작되었습니다.`);
+          } else {
+            toast.info(`저장소 정보가 저장되었으나, 데이터 수집은 수동으로 시작해야 합니다.`);
+          }
+        } catch (syncError) {
+          console.error('저장소 자동 동기화 시작 중 오류:', syncError);
+          toast.error('저장소 데이터 수집 시작에 실패했습니다. 수동으로 시작해주세요.');
+        }
+      } else if (!success) {
         toast.error("저장소 저장에 실패했습니다.");
       }
     } catch (error) {
@@ -320,6 +363,71 @@ export function AccountsTab() {
       loadRepositoriesWithoutData();
     }
   }, [settings]);
+  
+  // 데이터가 없는 저장소를 자동으로 확인하고 사용자에게 알림
+  useEffect(() => {
+    const reposWithoutData = Object.entries(repoDataState)
+      .filter(([_, state]) => state && !state.loading && !state.hasData)
+      .map(([id]) => id);
+    
+    if (reposWithoutData.length > 0) {
+      // 데이터가 없는 저장소 정보 찾기
+      const repoNames = reposWithoutData.map(id => {
+        const repo = settings?.repositories.find(r => r.id === id);
+        return repo ? repo.fullName || repo.name : `저장소 ID: ${id}`;
+      }).join(', ');
+      
+      // 사용자에게 알림으로 표시
+      toast.info(
+        `${reposWithoutData.length}개의 저장소에 데이터가 없습니다: ${repoNames}. 데이터 수집을 시작하시겠습니까?`,
+        {
+          duration: 10000,
+          action: {
+            label: '데이터 수집 시작',
+            onClick: () => {
+              // 모든 데이터 없는 저장소의 데이터 수집 시작
+              reposWithoutData.forEach(id => {
+                syncRepositoryData(id);
+              });
+              toast.success('데이터 수집이 시작되었습니다.');
+            }
+          }
+        }
+      );
+    }
+  }, [repoDataState, settings]);
+
+  // 모든 데이터 없는 저장소의 데이터 수집 시작
+  const syncAllWithoutData = async () => {
+    try {
+      // API 호출 시작
+      const response = await fetch('/api/settings/repositories/sync-all-without-data', {
+        method: 'POST'
+      });
+      
+      const data = await response.json();
+      
+      if (response.ok && data.success) {
+        if (data.repositories && data.repositories.length > 0) {
+          // 동기화 시작된 저장소 상태 업데이트
+          const newState = { ...repoDataState };
+          data.repositories.forEach((repo: any) => {
+            newState[repo.id] = { loading: true, hasData: false };
+          });
+          setRepoDataState(newState);
+          
+          toast.success(data.message);
+        } else {
+          toast.info(data.message);
+        }
+      } else {
+        toast.error(`동기화 요청 실패: ${data.message || '알 수 없는 오류'}`);
+      }
+    } catch (error) {
+      console.error('모든 저장소 동기화 요청 중 오류 발생:', error);
+      toast.error('저장소 동기화 요청 중 오류가 발생했습니다.');
+    }
+  };
 
   if (loading) {
     console.log('[DEBUG] AccountsTab - 로딩 중 상태 표시');
@@ -382,41 +490,56 @@ export function AccountsTab() {
             <CardContent>
               {filteredAccounts.length > 0 ? (
                 <div className="space-y-4">
-                  {filteredAccounts.map(account => (
+                  {filteredAccounts.map((account) => (
                     <div key={account.id} className="border rounded-md p-4">
                       <div className="flex justify-between items-start">
                         <div>
-                          <h3 className="font-medium text-lg">{account.username}</h3>
-                          <p className="text-sm text-muted-foreground">ID: {account.id}</p>
+                          <h3 className="text-lg font-medium">{account.name || account.username}</h3>
+                          <p className="text-sm text-gray-500">
+                            {account.type === 'github' ? 'GitHub' : account.type === 'github-enterprise' ? 'GitHub Enterprise' : '기타'} 계정
+                            {account.apiUrl && <span> ({account.apiUrl})</span>}
+                          </p>
                         </div>
-                        <div className="flex gap-2">
-                          <Button 
-                            variant="outline" 
-                            size="sm"
-                            onClick={() => {
-                              setCurrentAccount(account);
-                              setShowAccountDialog(true);
-                            }}
-                          >
-                            <Edit2 className="h-4 w-4 mr-1" /> 수정
+                        
+                        <div className="flex space-x-2">
+                          <Button variant="outline" size="sm" onClick={() => {
+                            setCurrentAccount(account);
+                            setShowAccountDialog(true);
+                          }}>
+                            <Edit2 className="mr-2 h-4 w-4" />
+                            수정
                           </Button>
                           <Button 
-                            variant="destructive" 
-                            size="sm"
+                            variant="outline" 
+                            size="sm" 
+                            className="text-red-500 hover:text-red-700 hover:bg-red-50 dark:hover:bg-red-950" 
                             onClick={() => handleDeleteAccount(account)}
                           >
-                            <Trash2 className="h-4 w-4 mr-1" /> 삭제
+                            <Trash2 className="mr-2 h-4 w-4" />
+                            삭제
                           </Button>
                         </div>
                       </div>
-                      <div className="grid grid-cols-2 gap-2 mt-2 text-sm">
-                        <div><span className="font-medium">URL:</span> {account.url}</div>
-                        <div><span className="font-medium">API URL:</span> {account.apiUrl}</div>
-                        <div><span className="font-medium">이메일:</span> {account.email}</div>
-                        <div><span className="font-medium">회사:</span> {account.company}</div>
-                        {account.org && (
-                          <div><span className="font-medium">조직:</span> {account.org}</div>
-                        )}
+                      
+                      <div className="mt-4">
+                        <div className="flex justify-between items-center mb-3">
+                          <h4 className="font-medium">저장소 관리</h4>
+                          <div className="flex space-x-2">
+                            {Object.values(repoDataState).some(state => !state.hasData) && (
+                              <Button variant="outline" size="sm" onClick={syncAllWithoutData}>
+                                <Database className="mr-2 h-4 w-4" />
+                                모든 저장소 데이터 수집
+                              </Button>
+                            )}
+                            <Button size="sm" onClick={() => {
+                              setCurrentRepository(undefined);
+                              setShowRepositoryDialog(true);
+                            }}>
+                              <Plus className="mr-2 h-4 w-4" />
+                              저장소 추가
+                            </Button>
+                          </div>
+                        </div>
                       </div>
                     </div>
                   ))}

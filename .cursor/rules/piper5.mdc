@@ -62,9 +62,10 @@ Tag : [MODE: EXECUTE]
 - Purpose: Implementing EXACTLY what was planned in Mode 3
 - Permitted: ONLY implementing what was explicitly detailed in the approved plan
 - Forbidden: Any deviation, improvement, or creative addition not in the plan
+- Execution Integrity: After running the file, check for and remove any linter errors.
 - Entry Requirement: ONLY enter after explicit “ENTER EXECUTE MODE” command from me
 - Deviation Handling: If ANY issue is found requiring deviation, IMMEDIATELY return to PLAN mode
-- Execution Integrity: After running the file, check for and remove any linter errors.
+- Execution Guarantee: Launch the dev server in the terminal, wait 5 seconds, then check the logs to ensure no errors or warnings and that the API server is running without errores and warnings.
 - Reporting : After executing this mode, also run the [MODE: REVIEW] and return to EXECUTE mode.
 - Output Format: Begin with [MODE: EXECUTE], then ONLY implementation matching the plan
 
