@@ -9,6 +9,7 @@ import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { dirname } from 'path';
+import { getGitHubTokenFromSettings, getGitHubEnterpriseTokenFromSettings } from '../../utils/token-extractor.js';
 
 // ES 모듈에서 __dirname 대체
 const __filename = fileURLToPath(import.meta.url);
@@ -184,12 +185,16 @@ export class SettingsService {
    */
   async getGitHubSettings(userId: number = DEFAULT_USER_ID): Promise<GitHubSettings> {
     try {
-      const dbAdapter = getDBAdapter();
+      console.log('[INFO] GitHub 설정 조회 중...');
       
-      let result: any[] = [];
+      // 안전한 토큰 추출 유틸리티 사용
+      const token = await getGitHubTokenFromSettings(userId);
+      
+      // 계정 설정에서 GitHub 계정 정보 조회
+      const dbAdapter = getDBAdapter();
+      let result;
       
       if (DB_TYPE === 'postgresql') {
-        // PostgreSQL - 문자열 쿼리 직접 사용 
         const query = `
           SELECT jsonb_path_query(data, '$.accounts[*] ? (@.type == "github")') as github_data
           FROM settings 
@@ -198,19 +203,21 @@ export class SettingsService {
         `;
         console.log('[DEBUG] 실행할 GitHub 설정 조회 쿼리:', query);
         result = await dbAdapter.query(query);
-      } else {
-        // SQLite
+      } else if (DB_TYPE === 'sqlite') {
+        // SQLite: 전체 데이터를 가져와 JS에서 처리
         const settings = await this.getAccountsSettings(userId);
         const githubAccount = settings.accounts.find(account => account.type === 'github');
         
         if (githubAccount) {
           return {
             username: githubAccount.username || '',
-            token: githubAccount.token || '',
+            token: token || githubAccount.token || '',
             url: githubAccount.url || '',
             apiUrl: githubAccount.apiUrl || 'https://api.github.com'
           };
         }
+      } else {
+        console.warn(`지원되지 않는 데이터베이스 타입: ${DB_TYPE}`);
       }
       
       if (result && Array.isArray(result) && result.length > 0) {
@@ -219,9 +226,17 @@ export class SettingsService {
           if (DB_TYPE === 'postgresql') {
             const githubData = result[0].github_data;
             if (githubData) {
+              console.log('[INFO] GitHub 설정 로드됨:', { 
+                username: githubData.username || '미설정',
+                token: token ? '설정됨' : '미설정',
+                url: githubData.url || '미설정',
+                apiUrl: githubData.apiUrl || 'https://api.github.com'
+              });
+              
               return {
                 username: githubData.username || '',
-                token: githubData.token || '',
+                // 안전하게 추출한 토큰 사용
+                token: token || '',
                 url: githubData.url || '',
                 apiUrl: githubData.apiUrl || 'https://api.github.com'
               };
@@ -233,7 +248,7 @@ export class SettingsService {
           
           return {
             username: data.username || '',
-            token: data.token || '',
+            token: token || data.token || '',
             url: data.url || '',
             apiUrl: data.apiUrl || 'https://api.github.com'
           };
@@ -243,6 +258,7 @@ export class SettingsService {
         }
       }
       
+      // 설정이 없거나 파싱 실패 시 기본값 반환
       return this.getDefaultGitHubSettings();
     } catch (error) {
       console.error('GitHub 설정 조회 실패:', error);
@@ -359,110 +375,101 @@ export class SettingsService {
    */
   async getGitHubEnterpriseSettings(userId: number = DEFAULT_USER_ID): Promise<GitHubEnterpriseSettings> {
     try {
-      const dbAdapter = getDBAdapter();
-      
+      // userId를 문자열로 변환
+      const userIdStr = String(userId);
       let result;
+      
+      // 기존 enterpriseToken이 있으면 함께 사용
+      let enterpriseToken: string | undefined;
+      
+      // Enterprise 토큰 값이 이미 있는지 확인
+      try {
+        const tokenResult = await getGitHubEnterpriseTokenFromSettings(userId);
+        enterpriseToken = tokenResult;
+      } catch (tokenError) {
+        console.warn('GitHub Enterprise 토큰 조회 실패:', tokenError);
+      }
+      
+      // 데이터베이스 타입에 따라 다른 쿼리 실행
       if (DB_TYPE === 'postgresql') {
-        // PostgreSQL에서는 JSONB 경로 쿼리를 사용하여 계정 설정에서 GitHub Enterprise 타입의 계정 정보를 검색
         const query = `
-          SELECT jsonb_path_query(data, '$.accounts[*] ? (@.type == "github_enterprise")') as enterprise_data
+          SELECT 
+            jsonb_path_query_first(data, '$.accounts[*] ? (@.type == "github_enterprise")') as enterprise_data
           FROM settings 
-          WHERE type = 'accounts' AND user_id = ${userId} 
+          WHERE type = 'accounts' AND user_id = ${userIdStr} 
           LIMIT 1
         `;
         console.log('[DEBUG] 실행할 GitHub Enterprise 설정 조회 쿼리:', query);
+        const dbAdapter = getDBAdapter();
         result = await dbAdapter.query(query);
+      } else if (DB_TYPE === 'sqlite') {
+        // SQLite: 전체 데이터를 가져와 JS에서 처리
+        const settings = await this.getAccountsSettings(userIdStr);
+        // Account 타입의 enterpriseAccount에서 안전하게 값 추출
+        const enterpriseAccount = settings.accounts.find(account => account.type === 'github_enterprise');
+        
+        if (enterpriseAccount) {
+          // additionalInfo를 통해 Account 인터페이스에 없는 속성에 안전하게 접근
+          // org 속성은 Account 타입에 있으므로 직접 접근 가능
+          const orgValue = enterpriseAccount.org || '';
+          
+          // additionalInfo 객체를 통해 확장 필드에 접근
+          const additionalInfo = enterpriseAccount.additionalInfo || {};
+          const repositoriesValue = Array.isArray(additionalInfo.repositories) ? 
+                                  additionalInfo.repositories : [];
+          const domainsValue = Array.isArray(additionalInfo.domains) ? 
+                             additionalInfo.domains : [];
+          
+          // 결과 객체 구성
+          return {
+            enterpriseToken: enterpriseToken || enterpriseAccount.token || '',
+            enterpriseUrl: enterpriseAccount.apiUrl || '',
+            enterpriseOrganization: orgValue,
+            organization: orgValue,
+            repositories: repositoriesValue,
+            domains: domainsValue
+          };
+        }
       } else {
-        // SQLite 등의 다른 DB에서는 계정 설정을 조회한 후 JavaScript에서 처리
-        const db = getDB();
-        result = await db.execute(`
-          SELECT data FROM settings 
-          WHERE type = 'accounts' AND user_id = ? 
-          LIMIT 1
-        `, [userId]);
+        console.warn(`지원되지 않는 데이터베이스 타입: ${DB_TYPE}`);
       }
       
-      // 결과 로깅
-      console.log(`[DEBUG] getGitHubEnterpriseSettings 결과: ${JSON.stringify(result)}`);
-      
-      // 계정 설정이 있는 경우
-      if (result && result.length > 0) {
+      if (result && Array.isArray(result) && result.length > 0) {
         try {
-          const data = typeof result[0].data === 'string' 
-            ? JSON.parse(result[0].data) 
-            : result[0].data;
-          
-          // PostgreSQL 케이스: enterprise_data 필드에서 정보 추출
-          if (result[0].enterprise_data) {
-            const enterpriseAccount = typeof result[0].enterprise_data === 'string'
-              ? JSON.parse(result[0].enterprise_data)
-              : result[0].enterprise_data;
-            
-            return {
-              enterpriseToken: enterpriseAccount.token || '',
-              enterpriseUrl: enterpriseAccount.apiUrl || enterpriseAccount.url || '',
-              enterpriseOrganization: enterpriseAccount.org || '',
-              organization: enterpriseAccount.org || '',
-              repositories: [],
-              domains: []
-            };
-          }
-          
-          // SQLite 등: data에서 github_enterprise 계정 검색
-          if (data.accounts && Array.isArray(data.accounts)) {
-            const enterpriseAccount = data.accounts.find((acc: { type: string }) => acc.type === 'github_enterprise');
-            
-            if (enterpriseAccount) {
+          // PostgreSQL 결과 처리
+          if (DB_TYPE === 'postgresql') {
+            const enterpriseData = result[0].enterprise_data;
+            if (enterpriseData) {
+              console.log('[INFO] GitHub Enterprise 설정 로드됨:', {
+                enterpriseToken: enterpriseToken ? '설정됨' : '미설정',
+                enterpriseUrl: enterpriseData.apiUrl || '미설정',
+                enterpriseOrganization: typeof enterpriseData.organization === 'string' ? enterpriseData.organization : '미설정',
+                organization: typeof enterpriseData.organization === 'string' ? enterpriseData.organization : '미설정'
+              });
+              
+              // enterpriseData에서 안전하게 속성 추출
+              const orgValue = enterpriseData.organization || '';
+              const repositoriesValue = Array.isArray(enterpriseData.repositories) ? 
+                                      enterpriseData.repositories : [];
+              const domainsValue = Array.isArray(enterpriseData.domains) ? 
+                                  enterpriseData.domains : [];
+              
               return {
-                enterpriseToken: enterpriseAccount.token || '',
-                enterpriseUrl: enterpriseAccount.apiUrl || enterpriseAccount.url || '',
-                enterpriseOrganization: enterpriseAccount.org || '',
-                organization: enterpriseAccount.org || '',
-                repositories: [],
-                domains: []
+                // 안전하게 추출한 토큰 사용
+                enterpriseToken: enterpriseToken || '',
+                enterpriseUrl: enterpriseData.apiUrl || '',
+                enterpriseOrganization: orgValue,
+                organization: orgValue,
+                repositories: repositoriesValue,
+                domains: domainsValue
               };
             }
           }
           
-          // 계정 설정은 있지만 GitHub Enterprise 계정은 없는 경우
-          console.log('[DEBUG] 계정 설정에서 GitHub Enterprise 계정을 찾을 수 없습니다.');
-          return this.getDefaultGitHubEnterpriseSettings();
-        } catch (parseError) {
-          console.error('GitHub Enterprise 설정 데이터 파싱 중 오류 발생:', parseError);
-          return this.getDefaultGitHubEnterpriseSettings();
-        }
-      }
-      
-      // 기존 방식으로 시도: github_enterprise 타입으로 직접 조회
-      console.log('[DEBUG] 계정 설정에서 GitHub Enterprise 정보를 찾지 못했습니다. 직접 조회를 시도합니다.');
-      
-      if (DB_TYPE === 'postgresql') {
-        const query = `
-          SELECT "data" FROM "settings" 
-          WHERE "type" = 'github_enterprise' AND "user_id" = ${userId} 
-          LIMIT 1
-        `;
-        console.log('[DEBUG] 실행할 GitHub Enterprise 직접 조회 쿼리:', query);
-        result = await dbAdapter.query(query);
-      } else {
-        const db = getDB();
-        result = await db.execute(`
-          SELECT data FROM settings 
-          WHERE type = ? AND user_id = ? 
-          LIMIT 1
-        `, ['github_enterprise', userId]);
-      }
-      
-      console.log(`[DEBUG] GitHub Enterprise 직접 조회 결과: ${JSON.stringify(result)}`);
-      
-      if (result && result.length > 0) {
-        try {
-          const data = typeof result[0].data === 'string' 
-            ? JSON.parse(result[0].data) 
-            : result[0].data;
+          const data = result[0].data ? JSON.parse(result[0].data) : {};
           
           return {
-            enterpriseToken: data.enterpriseToken || '',
+            enterpriseToken: enterpriseToken || data.enterpriseToken || '',
             enterpriseUrl: data.enterpriseUrl || '',
             enterpriseOrganization: data.enterpriseOrganization || '',
             organization: data.organization || '',
@@ -470,16 +477,15 @@ export class SettingsService {
             domains: data.domains || []
           };
         } catch (parseError) {
-          console.error('GitHub Enterprise 설정 데이터 파싱 중 오류 발생:', parseError);
+          console.error('GitHub Enterprise 설정 JSON 파싱 실패:', parseError);
           return this.getDefaultGitHubEnterpriseSettings();
         }
       }
       
-      // 설정이 없는 경우 기본값 반환
-      console.log('[DEBUG] GitHub Enterprise 설정이 없습니다. 기본값을 반환합니다.');
+      // 설정이 없거나 파싱 실패 시 기본값 반환
       return this.getDefaultGitHubEnterpriseSettings();
     } catch (error) {
-      console.error('GitHub Enterprise 설정 조회 중 오류 발생:', error);
+      console.error('GitHub Enterprise 설정 조회 실패:', error);
       return this.getDefaultGitHubEnterpriseSettings();
     }
   }
@@ -758,12 +764,14 @@ export class SettingsService {
 
   /**
    * 계정 설정을 가져옵니다.
+   * 
    * @param userId 사용자 ID (기본값: 1)
-   * @returns 계정 설정 객체
+   * @returns 계정 설정 정보
    */
-  async getAccountsSettings(userId: number = DEFAULT_USER_ID): Promise<AccountsSettings> {
-    console.log(`[DEBUG] getAccountsSettings 메서드 호출됨 (userId: ${userId})`);
+  async getAccountsSettings(userId: number | string = DEFAULT_USER_ID): Promise<AccountsSettings> {
     try {
+      console.log('[INFO] 계정 설정 조회 중...');
+      const userIdStr = typeof userId === 'number' ? String(userId) : userId;
       // 항상 DB에서 최신 데이터 가져오기 (캐싱 비활성화)
       const dbAdapter = getDBAdapter();
       console.log(`[DEBUG] DB 연결 타입: ${DB_TYPE}`);
@@ -774,7 +782,7 @@ export class SettingsService {
       // sql 태그드 템플릿이 아닌 execute 메서드 사용
       const query = `
         SELECT "data" FROM "settings" 
-        WHERE "type" = 'accounts' AND "user_id" = ${userId}
+        WHERE "type" = 'accounts' AND "user_id" = ${userIdStr}
         LIMIT 1
       `;
       console.log('[DEBUG] 실행할 쿼리:', query);

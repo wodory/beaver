@@ -5,6 +5,7 @@ import { getDB } from '../../../../db/index.js';
 import { eq, and } from 'drizzle-orm';
 import { logger } from '../../../../utils/logger.js';
 import { isGitHubEnterpriseReachable } from '../../../../utils/network.js';
+import { extractToken, getMaskedToken } from '../../../../utils/token.js';
 import {
   repositories,
   commits,
@@ -81,7 +82,7 @@ export class GitHubDataCollector {
     
     // 토큰 가용성 로깅
     if (accessToken) {
-      logger.info(`[GitHub] 저장소 ${repositoryId}: API 토큰 설정됨 (${accessToken.substring(0, 4)}...${accessToken.substring(accessToken.length - 4)})`);
+      logger.info(`[GitHub] 저장소 ${repositoryId}: API 토큰 설정됨 (${getMaskedToken(accessToken)})`);
     } else {
       logger.warn(`[GitHub] 저장소 ${repositoryId}: API 토큰 없음 - 인증되지 않은 요청은 제한될 수 있습니다`);
     }
@@ -1205,10 +1206,13 @@ export class GitHubDataCollector {
           const errorMsg = `GitHub Enterprise 토큰이 설정되지 않았습니다.`;
           logger.error(`[GitHubDataCollector] ${errorMsg}`);
           throw new Error(errorMsg);
-        } else if (accessToken.length < 30) {
-          logger.warn(`[GitHubDataCollector] GitHub Enterprise 토큰이 너무 짧습니다 (${accessToken.length}자). 유효한지 확인하세요.`);
         } else {
-          logger.info(`[GitHubDataCollector] GitHub Enterprise 토큰 설정됨 (${accessToken.substring(0, 4)}...${accessToken.substring(accessToken.length - 4)})`);
+          const tokenStr = extractToken(accessToken);
+          if (!tokenStr || tokenStr.length < 30) {
+            logger.warn(`[GitHubDataCollector] GitHub Enterprise 토큰이 너무 짧거나 유효하지 않습니다. 유효한지 확인하세요.`);
+          } else {
+            logger.info(`[GitHubDataCollector] GitHub Enterprise 토큰 설정됨 (${getMaskedToken(accessToken)})`);
+          }
         }
       } else if (repository.type === 'github') {
         // GitHub 설정 로드
@@ -1227,14 +1231,17 @@ export class GitHubDataCollector {
         // 토큰 유효성 검증
         if (!accessToken) {
           logger.warn(`[GitHubDataCollector] GitHub 토큰이 설정되지 않았습니다. API 요청 제한이 적용됩니다.`);
-        } else if (accessToken.length < 30) {
-          logger.warn(`[GitHubDataCollector] GitHub 토큰이 너무 짧습니다 (${accessToken.length}자). 유효한지 확인하세요.`);
         } else {
-          logger.info(`[GitHubDataCollector] GitHub 토큰 설정됨 (${accessToken.substring(0, 4)}...${accessToken.substring(accessToken.length - 4)})`);
+          const tokenStr = extractToken(accessToken);
+          if (!tokenStr || tokenStr.length < 30) {
+            logger.warn(`[GitHubDataCollector] GitHub 토큰이 너무 짧거나 유효하지 않습니다. 유효한지 확인하세요.`);
+          } else {
+            logger.info(`[GitHubDataCollector] GitHub 토큰 설정됨 (${getMaskedToken(accessToken)})`);
+          }
         }
       } else {
         accessToken = repository.apiToken;
-        logger.info(`[GitHubDataCollector] 저장소 자체 토큰 사용${accessToken ? ` (${accessToken.substring(0, 4)}...${accessToken.substring(accessToken.length - 4)})` : `: 없음`}`);
+        logger.info(`[GitHubDataCollector] 저장소 자체 토큰 사용${accessToken ? ` (${getMaskedToken(accessToken)})` : `: 없음`}`);
       }
       
       // GitHubDataCollector 인스턴스 생성 및 반환

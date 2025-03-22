@@ -6,6 +6,7 @@ import { GitHubApiCollector, GitHubApiSettings } from '../github/GitHubApiCollec
 import { logger } from '../../utils/logger.js';
 import { SettingsService } from '../../api/server/settings-service.js';
 import { sql } from 'drizzle-orm';
+import { extractToken, getMaskedToken } from '../../utils/token.js';
 
 /**
  * 시스템 설정 인터페이스
@@ -338,7 +339,11 @@ export class SyncManager {
           apiUrl = githubEnterpriseSettings.enterpriseUrl;
         }
         
-        logger.info(`GitHub Enterprise 토큰 사용: ${apiToken.substring(0, 4)}...${apiToken.substring(apiToken.length - 4)}`);
+        if (typeof apiToken === 'string') {
+          logger.info(`GitHub Enterprise 토큰 사용: ${getMaskedToken(apiToken)}`);
+        } else {
+          logger.info(`GitHub Enterprise 토큰 사용: (토큰 형식이 문자열이 아님)`);
+        }
       } else if (repoInfo.type === 'github') {
         // 일반 GitHub 저장소의 경우 GitHub 설정에서 토큰 가져오기
         const githubSettings = await this.settingsService.getGitHubSettings();
@@ -353,7 +358,11 @@ export class SyncManager {
         }
         
         if (apiToken) {
-          logger.info(`GitHub 토큰 사용: ${apiToken.substring(0, 4)}...${apiToken.substring(apiToken.length - 4)}`);
+          if (typeof apiToken === 'string') {
+            logger.info(`GitHub 토큰 사용: ${getMaskedToken(apiToken)}`);
+          } else {
+            logger.info(`GitHub 토큰 사용:` + typeof apiToken);
+          }
         } else {
           logger.warn(`GitHub 토큰이 설정되지 않았습니다.`);
         }
@@ -361,17 +370,41 @@ export class SyncManager {
         // 다른 타입의 저장소는 저장소 설정의 토큰 사용
         apiToken = repoInfo.apiToken;
         if (apiToken) {
-          logger.info(`저장소 자체 토큰 사용: ${apiToken.substring(0, 4)}...${apiToken.substring(apiToken.length - 4)}`);
+          if (typeof apiToken === 'string') {
+            logger.info(`저장소 자체 토큰 사용: ${getMaskedToken(apiToken)}`);
+          } else {
+            logger.info(`저장소 자체 토큰 사용: ` + typeof apiToken);
+          }
         }
       }
+
+      logger.info(`토큰 유효성 검사 직전 : ` + typeof apiToken)
       
       // 토큰 유효성 검증
       if (!apiToken) {
         logger.warn(`[3/6] 저장소 [${repoInfo.fullName}]에 API 토큰이 설정되지 않았습니다. GitHub API 요청 제한으로 동기화가 실패할 수 있습니다.`);
-      } else if (apiToken.length < 30) {
-        logger.warn(`[3/6] API 토큰이 너무 짧습니다 (${apiToken.length}자). 유효한 GitHub 토큰인지 확인하세요.`);
       } else {
-        logger.info(`[3/6] API 토큰 설정 완료`);
+        // 디버그 로그 추가
+        logger.info(`[3/6] apiToken 타입: ${typeof apiToken}, 값: ${JSON.stringify(apiToken)}`);
+        
+        // 안전하게 토큰 추출
+        try {
+          const tokenStr = extractToken(apiToken);
+          
+          // 디버그 로그 추가
+          logger.info(`[3/6] extractToken 결과 타입: ${typeof tokenStr}, 값: ${tokenStr}`);
+          
+          if (!tokenStr) {
+              logger.warn(`[3/6] API 토큰이 문자열 형식이 아니거나 유효하지 않습니다. 설정을 확인하세요.`);
+          } else if (typeof tokenStr === 'string' && tokenStr.length < 30) {
+              logger.warn(`[3/6] API 토큰이 너무 짧습니다 (${tokenStr.length}자). 유효한 GitHub 토큰인지 확인하세요.`);
+          } else {
+              logger.info(`[3/6] API 토큰 설정 완료`);
+          }
+        } catch (tokenError) {
+          logger.error(`[3/6] 토큰 처리 중 오류 발생: ${tokenError}`);
+          logger.warn(`[3/6] API 토큰 처리 실패. 동기화가 제한될 수 있습니다.`);
+        }
       }
       
       if (!apiUrl) {
@@ -382,7 +415,7 @@ export class SyncManager {
       logger.info(`[3/6] 최종 API URL: ${apiUrl}`);
       
       // 4. 데이터 수집기 초기화
-      logger.info(`[4/6] GitHubDataCollector 초기화 중...`);
+      logger.info(`[4/6] GitHubDataCollector 초기화 시작`);
       
       try {
         const { GitHubDataCollector } = await import('./services/github/GitHubDataCollector.js');
