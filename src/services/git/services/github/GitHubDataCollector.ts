@@ -15,8 +15,6 @@ import {
 } from '../../../../db/schema/index.js';
 import { SettingsRepository } from '../../../../repositories/interfaces/SettingsRepository.js';
 import { RepositoryInfoRepository } from '../../../../repositories/interfaces/RepositoryInfoRepository.js';
-import { PostgresSettingsRepository } from '../../../../repositories/implementations/PostgresSettingsRepository.js';
-import { PostgresRepositoryInfoRepository } from '../../../../repositories/implementations/PostgresRepositoryInfoRepository.js';
 // import { Octokit } from 'octokit';
 // import { RequestError } from '@octokit/request-error';
 // import { Database } from 'better-sqlite3';
@@ -47,63 +45,95 @@ export class GitHubDataCollector {
   private enterpriseHost: string = '';
 
   /**
-   * @param settingsRepository 설정 레포지토리
    * @param repositoryInfoRepository 저장소 정보 레포지토리
    * @param repositoryId 저장소 ID
    * @param accessToken GitHub API 액세스 토큰
    * @param baseUrl GitHub API 기본 URL (기본값: https://api.github.com)
    */
   constructor(
-    private settingsRepository: SettingsRepository,
-    private repositoryInfoRepository: RepositoryInfoRepository,
+    private readonly repositoryInfoRepository: RepositoryInfoRepository,
     repositoryId: number, 
-    accessToken?: string, 
+    accessToken?: unknown, 
     baseUrl: string = 'https://api.github.com'
   ) {
-    this.repositoryId = repositoryId;
-    this.db = getDB();
+    // 토큰 타입 로깅 (디버깅용)
+    logger.debug(`[GitHub] 저장소 ${repositoryId}: 전달된 토큰 타입: ${typeof accessToken}`);
     
-    // GitHub Enterprise URL 체크
-    this.isEnterpriseUrl = !baseUrl.includes('api.github.com');
-    if (this.isEnterpriseUrl) {
-      try {
-        const url = new URL(baseUrl);
-        this.enterpriseHost = url.hostname;
-        logger.info(`[GitHub] Enterprise 저장소 ${repositoryId} 초기화: 호스트 ${this.enterpriseHost}, API URL=${baseUrl}`);
-      } catch (err) {
-        logger.error(`[GitHub] 유효하지 않은 Enterprise URL: ${baseUrl} (저장소 ID: ${repositoryId})`);
+    try {
+      // 유효성 검사
+      if (typeof repositoryId !== 'number' || isNaN(repositoryId)) {
+        throw new Error(`유효하지 않은 저장소 ID: ${repositoryId}`);
       }
-    } else {
-      logger.info(`[GitHub] 일반 저장소 ${repositoryId} 초기화: API URL=${baseUrl}`);
+
+      this.repositoryId = repositoryId;
+      this.db = getDB();
+      
+      // GitHub Enterprise URL 체크
+      this.isEnterpriseUrl = !baseUrl.includes('api.github.com');
+      if (this.isEnterpriseUrl) {
+        try {
+          const url = new URL(baseUrl);
+          this.enterpriseHost = url.hostname;
+          logger.info(`[GitHub] Enterprise 저장소 ${repositoryId} 초기화: 호스트 ${this.enterpriseHost}, API URL=${baseUrl}`);
+        } catch (err) {
+          logger.error(`[GitHub] 유효하지 않은 Enterprise URL: ${baseUrl} (저장소 ID: ${repositoryId})`);
+        }
+      } else {
+        logger.info(`[GitHub] 일반 저장소 ${repositoryId} 초기화: API URL=${baseUrl}`);
+      }
+      
+      // GraphQL 엔드포인트 설정 (REST API URL에서 적절한 GraphQL URL로 변환)
+      this.graphqlEndpoint = this.normalizeGraphQLEndpoint(baseUrl);
+      
+      // 안전한 토큰 처리 (객체를 문자열로 변환하는 과정에서 발생하는 오류 방지)
+      let processedToken: string | undefined;
+      
+      try {
+        // accessToken이 null/undefined가 아니면 처리 시도
+        if (accessToken !== null && accessToken !== undefined) {
+          // 안전하게 토큰 추출 시도
+          logger.debug(`[GitHub] 저장소 ${repositoryId}: 토큰 추출 시도`);
+          processedToken = extractToken(accessToken);
+          
+          if (processedToken) {
+            logger.info(`[GitHub] 저장소 ${repositoryId}: API 토큰 추출 성공 (${getMaskedToken(processedToken)})`);
+          } else {
+            logger.warn(`[GitHub] 저장소 ${repositoryId}: 유효한 토큰을 추출할 수 없음`);
+          }
+        } else {
+          logger.warn(`[GitHub] 저장소 ${repositoryId}: API 토큰 없음 - 인증되지 않은 요청은 제한될 수 있습니다`);
+        }
+      } catch (tokenError) {
+        logger.error(`[GitHub] 저장소 ${repositoryId}: 토큰 처리 중 오류 발생 - ${tokenError instanceof Error ? tokenError.message : String(tokenError)}`);
+        processedToken = undefined;
+      }
+      
+      // GraphQL 클라이언트 초기화
+      const headers: Record<string, string> = {};
+      
+      if (processedToken) {
+        // GitHub API 인증 헤더 형식: 'Bearer XXX'
+        headers.authorization = `Bearer ${processedToken}`;
+        logger.debug(`[GitHub] 저장소 ${repositoryId}: 인증 헤더 설정 완료`);
+      } else {
+        logger.warn(`[GitHub] 저장소 ${repositoryId}: 인증 헤더 없이 진행 - API 제한이 적용될 수 있음`);
+      }
+      
+      // GraphQL 클라이언트 초기화
+      try {
+        this.graphqlWithAuth = graphql.defaults({
+          baseUrl: this.graphqlEndpoint,
+          headers
+        });
+        logger.debug(`[GitHub] 저장소 ${repositoryId}: GraphQL 클라이언트 초기화 성공`);
+      } catch (graphqlError) {
+        logger.error(`[GitHub] 저장소 ${repositoryId}: GraphQL 클라이언트 초기화 실패 - ${graphqlError instanceof Error ? graphqlError.message : String(graphqlError)}`);
+        throw new Error(`GraphQL 클라이언트 초기화 실패: ${graphqlError instanceof Error ? graphqlError.message : String(graphqlError)}`);
+      }
+    } catch (initError) {
+      logger.error(`[GitHub] 저장소 ${repositoryId} 초기화 중 오류 발생: ${initError instanceof Error ? initError.message : String(initError)}`);
+      throw initError;
     }
-    
-    // GraphQL 엔드포인트 설정 (REST API URL에서 적절한 GraphQL URL로 변환)
-    this.graphqlEndpoint = this.normalizeGraphQLEndpoint(baseUrl);
-    
-    // 토큰 가용성 로깅
-    if (accessToken) {
-      logger.info(`[GitHub] 저장소 ${repositoryId}: API 토큰 설정됨 (${getMaskedToken(accessToken)})`);
-    } else {
-      logger.warn(`[GitHub] 저장소 ${repositoryId}: API 토큰 없음 - 인증되지 않은 요청은 제한될 수 있습니다`);
-    }
-    
-    // GraphQL 클라이언트 초기화
-    const headers: Record<string, string> = {};
-    if (accessToken) {
-      // GitHub API 인증 헤더 형식 변경 ('token XXX' -> 'Bearer XXX')
-      headers.authorization = `Bearer ${accessToken}`;
-    }
-    
-    this.graphqlWithAuth = graphql.defaults({
-      baseUrl: this.graphqlEndpoint,
-      headers
-    });
-    
-    // REST API 클라이언트 초기화 (폴백용)
-    // this.octokit = new Octokit({
-    //   auth: accessToken || process.env.GITHUB_TOKEN,
-    //   baseUrl: baseUrl ? `${baseUrl}/api/v3` : undefined
-    // });
   }
 
   /**
@@ -203,7 +233,7 @@ export class GitHubDataCollector {
   async collectCommits(): Promise<number> {
     try {
       // 저장소 정보 조회
-      const { repository } = await this.getRepositoryInfo();
+      await this.getRepositoryInfo();
       
       // 기존 DB에서 저장소 정보를 직접 조회하여 lastSyncAt 정보 가져오기
       const repoFromDb = await this.db.query.repositories.findFirst({
@@ -612,7 +642,7 @@ export class GitHubDataCollector {
   }> {
     try {
       // 저장소 정보 조회
-      const { repository } = await this.getRepositoryInfo();
+      await this.getRepositoryInfo();
       
       // 기존 DB에서 저장소 정보를 직접 조회하여 lastSyncAt 정보 가져오기
       const repoFromDb = await this.db.query.repositories.findFirst({
@@ -1188,12 +1218,19 @@ export class GitHubDataCollector {
         throw new Error(errorMsg);
       }
       
-      if (repository.type === 'github-enterprise') {
+      if (repository.type === 'github_enterprise') {
         // GitHub Enterprise 설정 로드
         logger.info(`[GitHubDataCollector] GitHub Enterprise 설정 로드 중...`);
         const enterpriseSettings = await accountsSettings.getGitHubEnterpriseSettings?.() || { enterpriseUrl: '', enterpriseToken: '' };
         
-        accessToken = repository.apiToken || enterpriseSettings.enterpriseToken;
+        // 안전한 액세스 토큰 가져오기
+        try {
+          accessToken = repository.apiToken || enterpriseSettings.enterpriseToken;
+          logger.debug(`[GitHubDataCollector] Enterprise 토큰 타입: ${typeof accessToken}`);
+        } catch (tokenAccessError) {
+          logger.error(`[GitHubDataCollector] Enterprise 토큰 액세스 중 오류: ${tokenAccessError instanceof Error ? tokenAccessError.message : String(tokenAccessError)}`);
+          accessToken = undefined;
+        }
         
         // API URL이 없는 경우 설정에서 가져옴
         if (!baseUrl && enterpriseSettings.enterpriseUrl) {
@@ -1201,17 +1238,27 @@ export class GitHubDataCollector {
           logger.info(`[GitHubDataCollector] Enterprise API URL 설정됨: ${baseUrl}`);
         }
         
-        // 토큰 유효성 검증
+        // 토큰 유효성 검증 (안전하게 처리)
         if (!accessToken) {
           const errorMsg = `GitHub Enterprise 토큰이 설정되지 않았습니다.`;
           logger.error(`[GitHubDataCollector] ${errorMsg}`);
           throw new Error(errorMsg);
         } else {
-          const tokenStr = extractToken(accessToken);
-          if (!tokenStr || tokenStr.length < 30) {
-            logger.warn(`[GitHubDataCollector] GitHub Enterprise 토큰이 너무 짧거나 유효하지 않습니다. 유효한지 확인하세요.`);
-          } else {
-            logger.info(`[GitHubDataCollector] GitHub Enterprise 토큰 설정됨 (${getMaskedToken(accessToken)})`);
+          try {
+            const tokenStr = extractToken(accessToken);
+            if (!tokenStr || tokenStr.length < 30) {
+              logger.warn(`[GitHubDataCollector] GitHub Enterprise 토큰이 너무 짧거나 유효하지 않습니다. 유효한지 확인하세요.`);
+            } else {
+              try {
+                logger.info(`[GitHubDataCollector] GitHub Enterprise 토큰 설정됨 (${getMaskedToken(tokenStr)})`);
+              } catch (maskError) {
+                logger.error(`[GitHubDataCollector] 토큰 마스킹 중 오류: ${maskError instanceof Error ? maskError.message : String(maskError)}`);
+                logger.info(`[GitHubDataCollector] GitHub Enterprise 토큰 설정됨 (마스킹 실패)`);
+              }
+            }
+          } catch (tokenError) {
+            logger.error(`[GitHubDataCollector] 토큰 처리 중 오류: ${tokenError instanceof Error ? tokenError.message : String(tokenError)}`);
+            logger.warn(`[GitHubDataCollector] 토큰 처리 실패, 일부 기능이 제한될 수 있습니다.`);
           }
         }
       } else if (repository.type === 'github') {
@@ -1219,8 +1266,14 @@ export class GitHubDataCollector {
         logger.info(`[GitHubDataCollector] GitHub 설정 로드 중...`);
         const githubSettings = await accountsSettings.getGitHubSettings?.() || { token: '' };
         
-        // 저장소 자체 토큰 우선 사용, 없으면 전역 설정 사용
-        accessToken = repository.apiToken || githubSettings.token;
+        // 저장소 자체 토큰 우선 사용, 없으면 전역 설정 사용 (안전하게 액세스)
+        try {
+          accessToken = repository.apiToken || githubSettings.token;
+          logger.debug(`[GitHubDataCollector] GitHub 토큰 타입: ${typeof accessToken}`);
+        } catch (tokenAccessError) {
+          logger.error(`[GitHubDataCollector] GitHub 토큰 액세스 중 오류: ${tokenAccessError instanceof Error ? tokenAccessError.message : String(tokenAccessError)}`);
+          accessToken = undefined;
+        }
         
         // API URL이 없으면 기본 GitHub API URL 사용
         if (!baseUrl) {
@@ -1228,25 +1281,64 @@ export class GitHubDataCollector {
           logger.info(`[GitHubDataCollector] 기본 GitHub API URL 설정됨: ${baseUrl}`);
         }
         
-        // 토큰 유효성 검증
+        // 토큰 유효성 검증 (안전하게 처리)
         if (!accessToken) {
           logger.warn(`[GitHubDataCollector] GitHub 토큰이 설정되지 않았습니다. API 요청 제한이 적용됩니다.`);
         } else {
-          const tokenStr = extractToken(accessToken);
-          if (!tokenStr || tokenStr.length < 30) {
-            logger.warn(`[GitHubDataCollector] GitHub 토큰이 너무 짧거나 유효하지 않습니다. 유효한지 확인하세요.`);
-          } else {
-            logger.info(`[GitHubDataCollector] GitHub 토큰 설정됨 (${getMaskedToken(accessToken)})`);
+          try {
+            const tokenStr = extractToken(accessToken);
+            if (!tokenStr || tokenStr.length < 30) {
+              logger.warn(`[GitHubDataCollector] GitHub 토큰이 너무 짧거나 유효하지 않습니다. 유효한지 확인하세요.`);
+            } else {
+              try {
+                logger.info(`[GitHubDataCollector] GitHub 토큰 설정됨 (${getMaskedToken(tokenStr)})`);
+              } catch (maskError) {
+                logger.error(`[GitHubDataCollector] 토큰 마스킹 중 오류: ${maskError instanceof Error ? maskError.message : String(maskError)}`);
+                logger.info(`[GitHubDataCollector] GitHub 토큰 설정됨 (마스킹 실패)`);
+              }
+            }
+          } catch (tokenError) {
+            logger.error(`[GitHubDataCollector] 토큰 처리 중 오류: ${tokenError instanceof Error ? tokenError.message : String(tokenError)}`);
+            logger.warn(`[GitHubDataCollector] 토큰 처리 실패, 일부 기능이 제한될 수 있습니다.`);
           }
         }
       } else {
-        accessToken = repository.apiToken;
-        logger.info(`[GitHubDataCollector] 저장소 자체 토큰 사용${accessToken ? ` (${getMaskedToken(accessToken)})` : `: 없음`}`);
+        // 기타 저장소 타입 (안전하게 토큰 액세스)
+        try {
+          accessToken = repository.apiToken;
+          
+          if (accessToken) {
+            try {
+              logger.info(`[GitHubDataCollector] 저장소 자체 토큰 사용 (${getMaskedToken(accessToken)})`);
+            } catch (maskError) {
+              logger.error(`[GitHubDataCollector] 토큰 마스킹 중 오류: ${maskError instanceof Error ? maskError.message : String(maskError)}`);
+              logger.info(`[GitHubDataCollector] 저장소 자체 토큰 사용 (마스킹 실패)`);
+            }
+          } else {
+            logger.info(`[GitHubDataCollector] 저장소 자체 토큰: 없음`);
+          }
+        } catch (tokenAccessError) {
+          logger.error(`[GitHubDataCollector] 저장소 토큰 액세스 중 오류: ${tokenAccessError instanceof Error ? tokenAccessError.message : String(tokenAccessError)}`);
+          accessToken = undefined;
+        }
       }
       
       // GitHubDataCollector 인스턴스 생성 및 반환
       logger.info(`[GitHubDataCollector] 데이터 수집기 초기화 완료, ID: ${repositoryId}, URL: ${baseUrl || 'default'}`);
-      return new GitHubDataCollector(settingsRepo, repoInfoRepo, repositoryId, accessToken, baseUrl);
+      
+      try {
+        // 안전한 인스턴스 생성
+        return new GitHubDataCollector(repoInfoRepo, repositoryId, accessToken, baseUrl);
+      } catch (initError) {
+        logger.error(`[GitHubDataCollector] 인스턴스 생성 중 오류 발생: ${initError instanceof Error ? initError.message : String(initError)}`);
+        
+        if (initError instanceof Error && initError.stack) {
+          logger.error(`[GitHubDataCollector] 스택 트레이스: ${initError.stack}`);
+        }
+        
+        // 오류 세부 정보 로깅 및 재전달
+        throw new Error(`GitHubDataCollector 인스턴스 생성 실패: ${initError instanceof Error ? initError.message : String(initError)}`);
+      }
     } catch (error) {
       const errorMsg = error instanceof Error ? error.message : String(error);
       logger.error(`[GitHubDataCollector] 데이터 수집기 생성 중 오류 발생: ${errorMsg}`);

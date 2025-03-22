@@ -45,6 +45,8 @@ export interface Repository {
   type: AccountType;    // 저장소 유형 (github, github_enterprise 등)
   owner: string;        // 저장소 소유자 (계정 ID)
   ownerReference?: string; // 소유자 참조 (owner@type 형식)
+  apiUrl?: string;      // API URL (선택적)
+  apiToken?: string;    // API 토큰 (선택적)
 }
 
 /**
