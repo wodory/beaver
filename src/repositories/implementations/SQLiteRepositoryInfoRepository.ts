@@ -1,6 +1,6 @@
 import { Repository } from '../../types/settings';
 import { RepositoryInfoRepository } from '../interfaces/RepositoryInfoRepository';
-import { SQLiteAdapter } from '../../db/adapters/SQLiteAdapter.js';
+import { SQLiteAdapter } from '../../db/adapters/SQLiteAdapter';
 
 export class SQLiteRepositoryInfoRepository implements RepositoryInfoRepository {
   constructor(private adapter: SQLiteAdapter) {}

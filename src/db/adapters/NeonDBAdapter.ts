@@ -72,6 +72,15 @@ export class NeonDBAdapter implements IDatabaseAdapter {
     }
     
     // 직접 SQL 실행인 경우
+    if (typeof query === 'string') {
+      if (!this.poolClient) {
+        throw new Error('데이터베이스 클라이언트가 초기화되지 않았습니다.');
+      }
+      
+      return await this.poolClient.unsafe(query) as unknown as T;
+    }
+    
+    // 객체형 쿼리에서 text와 values가 있는 경우
     if (typeof query === 'object' && query.text) {
       const { text, values } = query;
       
@@ -83,7 +92,11 @@ export class NeonDBAdapter implements IDatabaseAdapter {
     }
     
     // Drizzle 쿼리 객체인 경우
-    return await query.execute() as T;
+    if (query.execute && typeof query.execute === 'function') {
+      return await query.execute() as T;
+    }
+    
+    throw new Error('지원되지 않는 쿼리 형식입니다.');
   }
 
   /**

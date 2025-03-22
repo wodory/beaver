@@ -26,6 +26,21 @@ export default defineConfig({
     },
     headers: {
       'Cache-Control': 'no-store' // 브라우저 캐시 비활성화
+    },
+    proxy: {
+      // API 서버로 프록시 설정 추가
+      '/api': {
+        target: 'http://localhost:3001',
+        changeOrigin: true,
+        secure: false,
+        ws: true,
+        // 3001 포트로 리다이렉트할 때 응답 헤더 로깅 (디버깅용)
+        configure: (proxy, _options) => {
+          proxy.on('proxyRes', (proxyRes, req, _res) => {
+            console.log(`[Proxy] ${req.method} ${req.url} -> ${proxyRes.statusCode}`);
+          });
+        }
+      }
     }
   },
   optimizeDeps: {

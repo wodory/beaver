@@ -3,7 +3,7 @@
  */
 import { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 import { SettingsService } from './settings-service.js';
-import { UserSettings, GitHubSettings, GitHubEnterpriseSettings, JiraSettings, AccountsSettings, Repository } from '../../types/settings.js';
+import { UserSettings, GitHubSettings, GitHubEnterpriseSettings, JiraSettings, AccountsSettings } from '../../types/settings.js';
 import { getDB } from '../../db/index.js';
 import { schemaToUse as schema } from '../../db/index.js';
 import { eq, count } from 'drizzle-orm';
@@ -41,26 +41,21 @@ interface RepositoryRecord {
 const settingsService = new SettingsService();
 
 /**
- * 저장소 테이블을 최신 설정으로 업데이트
- * 
- * @param accountsSettings 계정 설정
- * @returns 새로 추가되거나 URL이 변경된 저장소 ID 목록을 담은 객체
+ * 저장소 테이블 업데이트 함수
+ * @param accountsSettings 계정 설정 정보
  */
-async function updateRepositoriesTable(accountsSettings: AccountsSettings): Promise<{
-  success: boolean;
-  newOrModified: number[];
-}> {
+async function updateRepositoriesTable(accountsSettings: AccountsSettings) {
   try {
     const db = getDB();
-    const newOrModifiedRepos: number[] = [];
     
-    // 기존 저장소 목록 조회
-    const existingRepos = await db.select()
-      .from(schema.repositories)
-      .execute();
+    // 기존 저장소 정보 확인
+    const existingRepos = await db.select().from(schema.repositories) as RepositoryRecord[];
     
-    // 설정에 있는 저장소 fullName 목록
-    const configRepoFullNames = accountsSettings.repositories.map((r: Repository) => r.fullName);
+    logger.info(`기존 저장소 테이블에 ${existingRepos.length}개의 저장소가 있습니다.`);
+    
+    // 설정에 있는 저장소의 fullName 목록
+    const configRepoFullNames = accountsSettings.repositories.map(repo => repo.fullName);
+    logger.info('설정에 있는 저장소 목록:', configRepoFullNames);
     
     // 설정에 없는 저장소 삭제 및 관련 데이터 정리
     for (const existingRepo of existingRepos) {
@@ -96,7 +91,7 @@ async function updateRepositoriesTable(accountsSettings: AccountsSettings): Prom
       const nameOnly = repo.name || fullName.split('/').pop() || fullName;
       
       // 같은 fullName을 가진 저장소가 이미 있는지 확인
-      const existingRepo = existingRepos.find((r: RepositoryRecord) => r.fullName === fullName);
+      const existingRepo = existingRepos.find(r => r.fullName === fullName);
       
       // API URL 및 토큰 설정
       const ownerAccount = repo.ownerReference ? 
@@ -110,9 +105,6 @@ async function updateRepositoriesTable(accountsSettings: AccountsSettings): Prom
           // 기존 저장소 업데이트
           logger.info(`저장소 업데이트: ${fullName}`);
           
-          // URL이 변경되었는지 확인
-          const urlChanged = existingRepo.cloneUrl !== repo.url;
-          
           await db.update(schema.repositories)
             .set({
               name: nameOnly,
@@ -123,12 +115,6 @@ async function updateRepositoriesTable(accountsSettings: AccountsSettings): Prom
               updatedAt: new Date()
             })
             .where(eq(schema.repositories.fullName, fullName));
-            
-          // URL이 변경된 경우 자동 동기화 대상에 추가
-          if (urlChanged) {
-            logger.info(`저장소 URL 변경 감지: ${fullName} - 자동 동기화 추가`);
-            newOrModifiedRepos.push(existingRepo.id);
-          }
         } else {
           // 새 저장소 추가
           logger.info(`저장소 추가: ${fullName}`);
@@ -146,26 +132,24 @@ async function updateRepositoriesTable(accountsSettings: AccountsSettings): Prom
             })
             .returning();
           
-          // 신규 저장소의 ID 추출 및 자동 동기화 대상에 추가
+          // 신규 저장소의 데이터 수집 시작 (백그라운드로 처리)
           const newRepoId = result[0].id;
-          logger.info(`새로운 저장소 ${fullName} (ID: ${newRepoId}) 추가됨 - 자동 동기화 예약`);
-          newOrModifiedRepos.push(newRepoId);
+          logger.info(`새로운 저장소 ${fullName} (ID: ${newRepoId})의 데이터 수집 시작`);
+          
+          // 비동기로 데이터 수집 시작 (Promise 대기하지 않음)
+          syncRepositoryData(newRepoId, apiToken, apiUrl).catch(error => {
+            logger.error(`새 저장소 ${fullName} 데이터 수집 중 오류 발생:`, error);
+          });
         }
       } catch (error) {
         logger.error(`저장소 ${fullName} 처리 중 오류 발생:`, error);
       }
     }
     
-    return {
-      success: true,
-      newOrModified: newOrModifiedRepos
-    };
+    return true;
   } catch (error) {
     logger.error('저장소 테이블 업데이트 중 오류 발생:', error);
-    return {
-      success: false,
-      newOrModified: []
-    };
+    throw error;
   }
 }
 
@@ -334,20 +318,7 @@ export async function settingsRoutes(fastify: FastifyInstance) {
         // repositories 테이블도 함께 업데이트
         if (settings.repositories && settings.repositories.length > 0) {
           console.log('저장소 정보가 업데이트되었습니다. repositories 테이블을 업데이트합니다.');
-          const result = await updateRepositoriesTable(updatedSettings);
-          
-          // 새로 추가되었거나 URL이 변경된 저장소에 대해 자동 동기화 시작
-          if (result.success && result.newOrModified.length > 0) {
-            logger.info(`${result.newOrModified.length}개의 저장소에 대해 자동 동기화를 시작합니다.`);
-            
-            // 각 저장소에 대해 비동기적으로 동기화 시작
-            for (const repoId of result.newOrModified) {
-              // 비동기로 처리하여 API 응답을 지연시키지 않음
-              syncRepositoryData(repoId).catch(error => {
-                logger.error(`저장소 ID ${repoId} 자동 동기화 중 오류 발생:`, error);
-              });
-            }
-          }
+          await updateRepositoriesTable(updatedSettings);
         }
         
         return reply.send(updatedSettings);
@@ -468,11 +439,21 @@ export async function settingsRoutes(fastify: FastifyInstance) {
   /**
    * 데이터가 없는 저장소 목록 조회
    */
-  fastify.get('/api/settings/repositories/without-data', async (_, reply) => {
+  fastify.get('/api/settings/repositories/without-data', async (request, reply) => {
     try {
+      const { serviceType } = request.query as { serviceType?: string };
+      logger.info(`데이터가 없는 저장소 목록 조회 요청 - 서비스 유형: ${serviceType || '전체'}`);
+      
       const syncManager = new SyncManager();
       try {
-        const repositories = await syncManager.getRepositoriesWithoutData();
+        const allRepositoriesWithoutData = await syncManager.getRepositoriesWithoutData();
+        
+        // 서비스 유형에 따라 필터링
+        const repositories = serviceType
+          ? allRepositoriesWithoutData.filter(repo => repo.type === serviceType)
+          : allRepositoriesWithoutData;
+        
+        logger.info(`데이터가 없는 저장소 수: ${repositories.length}${serviceType ? ` (${serviceType} 유형)` : ''}`);
         
         return {
           success: true,
@@ -488,11 +469,19 @@ export async function settingsRoutes(fastify: FastifyInstance) {
         // sync_history 테이블이 없는 경우나 다른 DB 오류 처리
         logger.warn('저장소 데이터 조회 중 오류 발생, 모든 저장소를 반환합니다:', error);
         
-        // 대체 방법: 모든 저장소 반환
+        // 대체 방법: 모든 저장소 반환 (필터링 적용)
         const allRepositories = await syncManager.getAllRepositories();
+        
+        // 서비스 유형에 따라 필터링
+        const repositories = serviceType
+          ? allRepositories.filter(repo => repo.type === serviceType)
+          : allRepositories;
+        
+        logger.info(`필터링된 모든 저장소 수: ${repositories.length}${serviceType ? ` (${serviceType} 유형)` : ''}`);
+        
         return {
           success: true,
-          repositories: allRepositories.map((repo: any) => ({
+          repositories: repositories.map((repo: any) => ({
             id: repo.id,
             name: repo.name,
             fullName: repo.fullName,
@@ -542,7 +531,6 @@ export async function settingsRoutes(fastify: FastifyInstance) {
       
       return {
         success: true,
-        status: 'started',
         message: `저장소 ${repository.fullName}의 데이터 수집이 백그라운드에서 시작되었습니다.`
       };
     } catch (error) {
@@ -761,56 +749,62 @@ export async function settingsRoutes(fastify: FastifyInstance) {
   });
 
   /**
-   * 데이터가 없는 모든 저장소 동기화 시작
+   * 데이터가 없는 모든 저장소 동기화 API
    */
-  fastify.post('/api/settings/repositories/sync-all-without-data', async (_, reply) => {
+  fastify.post('/api/settings/repositories/sync-all-without-data', async (request, reply) => {
     try {
       const syncManager = new SyncManager();
+      const { serviceType } = request.body as { serviceType?: string };
       
-      // 데이터가 없는 저장소 목록 가져오기
-      let reposWithoutData;
-      try {
-        reposWithoutData = await syncManager.getRepositoriesWithoutData();
-      } catch (error) {
-        logger.warn('데이터가 없는 저장소 목록 조회 중 오류 발생:', error);
-        return reply.code(500).send({
-          success: false,
-          message: '데이터가 없는 저장소 목록 조회 중 오류가 발생했습니다.'
+      logger.info(`데이터가 없는 저장소 동기화 요청 수신 - 서비스 유형: ${serviceType || '전체'}`);
+      
+      // 데이터가 없는 저장소 목록 조회
+      const allRepositoriesWithoutData = await syncManager.getRepositoriesWithoutData();
+      
+      // 서비스 유형에 따라 필터링
+      const repositories = serviceType
+        ? allRepositoriesWithoutData.filter(repo => repo.type === serviceType)
+        : allRepositoriesWithoutData;
+      
+      if (repositories.length === 0) {
+        return reply.send({
+          message: serviceType 
+            ? `${serviceType} 유형에서 데이터가 없는 저장소가 없습니다.` 
+            : '데이터가 없는 저장소가 없습니다. 모든 저장소에 이미 데이터가 있습니다.',
+          status: 'completed',
+          repositoryIds: []
         });
       }
       
-      if (reposWithoutData.length === 0) {
-        return {
-          success: true,
-          message: '모든 저장소에 이미 데이터가 있습니다.',
-          repositories: []
-        };
-      }
+      const repositoryIds = repositories.map(repo => repo.id);
       
-      // 각 저장소에 대해 비동기적으로 동기화 시작
-      const startedRepos = [];
-      for (const repo of reposWithoutData) {
-        syncRepositoryData(repo.id).catch(error => {
-          logger.error(`저장소 ID ${repo.id} 자동 동기화 중 오류 발생:`, error);
-        });
-        
-        startedRepos.push({
+      logger.info(`데이터가 없는 ${repositoryIds.length}개 저장소 동기화 시작`);
+      
+      // 각 저장소를 개별적으로 동기화 (백그라운드에서 실행)
+      repositoryIds.forEach(repoId => {
+        syncManager.syncRepository(repoId)
+          .catch(error => {
+            logger.error(`저장소 ID ${repoId} 동기화 중 오류 발생:`, error);
+          });
+      });
+      
+      // 바로 응답
+      return reply.send({
+        message: `데이터가 없는 ${repositoryIds.length}개 저장소 동기화가 시작되었습니다.`,
+        status: 'started',
+        repositoryIds,
+        repositories: repositories.map(repo => ({
           id: repo.id,
           name: repo.name,
-          fullName: repo.fullName
-        });
-      }
-      
-      return {
-        success: true,
-        message: `${startedRepos.length}개의 저장소 데이터 수집이 시작되었습니다.`,
-        repositories: startedRepos
-      };
+          fullName: repo.fullName,
+          type: repo.type // 저장소 유형도 함께 반환
+        }))
+      });
     } catch (error) {
-      logger.error('모든 저장소 동기화 시작 중 오류 발생:', error);
-      return reply.code(500).send({
-        success: false,
-        message: `저장소 동기화 요청 처리 중 오류 발생: ${error instanceof Error ? error.message : String(error)}`
+      logger.error('데이터가 없는 저장소 동기화 요청 중 오류 발생:', error);
+      return reply.status(500).send({
+        error: '데이터가 없는 저장소 동기화를 시작할 수 없습니다.',
+        message: error instanceof Error ? error.message : String(error)
       });
     }
   });

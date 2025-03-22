@@ -1,5 +1,5 @@
 import { SettingsRepository } from '../interfaces/SettingsRepository';
-import { SQLiteAdapter } from '../../db/adapters/SQLiteAdapter.js';
+import { SQLiteAdapter } from '../../db/adapters/SQLiteAdapter';
 
 export class SQLiteSettingsRepository implements SettingsRepository {
   constructor(private adapter: SQLiteAdapter) {}

@@ -14,17 +14,30 @@ import { SQLiteAdapter } from './adapters/SQLiteAdapter.js';
 import { IDatabaseAdapter } from './adapters/IDatabaseAdapter.js';
 import { SQL } from 'drizzle-orm';
 
+// 데이터베이스 타입 정의 (별도 파일에서 import하지 않고 직접 정의)
+const DB_TYPES = {
+  POSTGRESQL: 'postgresql',
+  SQLITE: 'sqlite'
+} as const;
+
 // 데이터베이스 타입 설정 (환경 변수에서 읽기)
-// 항상 최신 환경 변수 값을 반환하도록 함수로 변경
+// 환경 변수를 직접 읽기 (dotenv 의존성 제거)
 export function getDbType(): string {
-  return process.env.DB_TYPE || 'postgresql';
+  // 명시적으로 process.env.DB_TYPE 출력
+  console.log('DB_TYPE env variable:', process.env.DB_TYPE);
+  
+  // 값이 명시적으로 'sqlite'인 경우에만 SQLite 사용, 그렇지 않으면 기본값 postgresql
+  if (process.env.DB_TYPE === DB_TYPES.SQLITE) {
+    return DB_TYPES.SQLITE;
+  }
+  return DB_TYPES.POSTGRESQL;
 }
 
-// 정적 변수 대신 동적 변수로 변경
+// DB_TYPE 변수 초기화
 export const DB_TYPE = getDbType();
 
 // 초기 DB 타입 출력
-console.log('Initial database type:', getDbType());
+console.log('Using database type:', DB_TYPE);
 
 // 데이터베이스 연결 문자열
 let DB_CONNECTION = '';
@@ -38,7 +51,69 @@ let dbAdapterInstance: IDatabaseAdapter | null = null;
 export { schema, schemaSQLite };
 
 // 데이터베이스 유형에 따라 스키마 선택
-export const schemaToUse = getDbType() === 'sqlite' ? schemaSQLite : schema;
+export const schemaToUse = DB_TYPE === DB_TYPES.SQLITE ? schemaSQLite : schema;
+
+// 데이터베이스 어댑터 팩토리 (직접 구현)
+class DatabaseAdapterFactory {
+  private static instance: DatabaseAdapterFactory;
+  private adapters: Map<string, IDatabaseAdapter> = new Map();
+  
+  /**
+   * 싱글톤 인스턴스 반환
+   */
+  public static getInstance(): DatabaseAdapterFactory {
+    if (!DatabaseAdapterFactory.instance) {
+      DatabaseAdapterFactory.instance = new DatabaseAdapterFactory();
+    }
+    return DatabaseAdapterFactory.instance;
+  }
+  
+  /**
+   * 데이터베이스 어댑터 생성
+   * @param type 데이터베이스 타입
+   * @param connectionString 연결 문자열
+   * @returns 데이터베이스 어댑터 인스턴스
+   */
+  public createAdapter(type: string, connectionString: string): IDatabaseAdapter {
+    // 캐시된 어댑터가 있으면 재사용
+    const cacheKey = `${type}:${connectionString}`;
+    if (this.adapters.has(cacheKey)) {
+      return this.adapters.get(cacheKey)!;
+    }
+    
+    // 타입에 따라 어댑터 생성
+    let adapter: IDatabaseAdapter;
+    
+    if (type === DB_TYPES.POSTGRESQL) {
+      adapter = new NeonDBAdapter(connectionString);
+    } else if (type === DB_TYPES.SQLITE) {
+      adapter = new SQLiteAdapter(connectionString);
+    } else {
+      throw new Error(`지원하지 않는 데이터베이스 타입: ${type}`);
+    }
+    
+    // 어댑터 캐싱
+    this.adapters.set(cacheKey, adapter);
+    
+    return adapter;
+  }
+  
+  /**
+   * 모든 어댑터 연결 종료
+   */
+  public async closeAll(): Promise<void> {
+    // 모든 캐시된 어댑터 연결 종료
+    for (const adapter of this.adapters.values()) {
+      await adapter.close();
+    }
+    
+    // 캐시 비우기
+    this.adapters.clear();
+  }
+}
+
+// 팩토리 인스턴스
+const databaseAdapterFactory = DatabaseAdapterFactory.getInstance();
 
 /**
  * 데이터베이스를 초기화합니다.
@@ -52,7 +127,7 @@ export async function initializeDatabase(): Promise<any> {
     console.log('Resolved database type:', getDbType());
     
     // 데이터베이스 유형에 따라 다른 초기화 로직 사용
-    if (getDbType() === 'sqlite') {
+    if (getDbType() === DB_TYPES.SQLITE) {
       console.log('SQLite 데이터베이스 초기화 중...');
       return await initializeSQLiteDatabase();
     } else {
@@ -74,8 +149,10 @@ async function initializeSQLiteDatabase() {
     const sqliteFilePath = process.env.SQLITE_FILE_PATH || ':memory:';
     console.log('Using SQLite database with file path:', sqliteFilePath);
     
-    // SQLiteAdapter 인스턴스 생성 및 초기화
-    dbAdapterInstance = new SQLiteAdapter(sqliteFilePath);
+    // 팩토리를 통해 SQLite 어댑터 생성
+    dbAdapterInstance = databaseAdapterFactory.createAdapter(DB_TYPES.SQLITE, sqliteFilePath);
+    
+    // 어댑터 초기화
     await dbAdapterInstance.initialize();
     
     // Drizzle ORM 인스턴스 설정
@@ -97,26 +174,22 @@ async function initializePostgresDatabase() {
   DB_CONNECTION = process.env.DATABASE_URL || 'postgresql://localhost:5432/github_metrics';
   console.log('Using PostgreSQL database with connection string:', DB_CONNECTION);
   
-  // Neon DB 연결을 위한 SSL 설정
-  queryClient = postgres(DB_CONNECTION, { 
-    ssl: process.env.NODE_ENV === 'production' 
-      ? { rejectUnauthorized: true } // 프로덕션 환경
-      : { rejectUnauthorized: false }, // 개발 환경
-    max: 1, // Neon 프리티어 권장 값
-    idle_timeout: 20, // Neon 권장 값
-    connect_timeout: 30 // 연결 타임아웃 (초)
-  });
+  // 팩토리를 통해 PostgreSQL 어댑터 생성
+  dbAdapterInstance = databaseAdapterFactory.createAdapter(DB_TYPES.POSTGRESQL, DB_CONNECTION);
   
-  db = drizzle(queryClient, { schema });
-  
-  // NeonDBAdapter 인스턴스 생성 및 초기화
-  dbAdapterInstance = new NeonDBAdapter(DB_CONNECTION);
+  // 어댑터 초기화
   await dbAdapterInstance.initialize();
   
-  // PostgreSQL 마이그레이션 실행
+  // Drizzle ORM 인스턴스 설정
+  db = dbAdapterInstance.db;
+  
+  // 마이그레이션 실행
   try {
-    await migrate(db, { migrationsFolder: './src/db/migrations' });
-    console.log('Database migration completed successfully');
+    // null 체크 추가
+    if (dbAdapterInstance) {
+      await dbAdapterInstance.runMigrations();
+      console.log('Database migration completed successfully');
+    }
   } catch (error: any) {
     // 테이블이 이미 존재하는 경우 (42P07), 오류를 무시하고 계속 진행
     if (error.code === '42P07') {
@@ -137,26 +210,8 @@ async function initializePostgresDatabase() {
  */
 export async function closeDatabase(): Promise<void> {
   try {
-    // DB 어댑터 유형에 따른 종료 처리
-    if (getDbType() === 'sqlite') {
-      // SQLite 어댑터 종료
-      if (dbAdapterInstance) {
-        await dbAdapterInstance.close();
-        console.log('SQLite 데이터베이스 연결 종료');
-      }
-    } else {
-      // PostgreSQL 어댑터 종료
-      if (queryClient) {
-        // PostgreSQL 연결 종료
-        await queryClient.end();
-        console.log('PostgreSQL 쿼리 클라이언트 종료');
-      }
-      
-      if (dbAdapterInstance) {
-        await dbAdapterInstance.close();
-        console.log('PostgreSQL 어댑터 종료');
-      }
-    }
+    // 팩토리를 통해 모든 어댑터 종료
+    await databaseAdapterFactory.closeAll();
     
     db = null;
     queryClient = null;
@@ -194,22 +249,25 @@ export function getDBAdapter(): IDatabaseAdapter {
  * @returns 콜백 함수의 결과
  */
 export async function transaction<T>(callback: () => Promise<T>): Promise<T> {
-  if (!db) {
-    throw new Error('데이터베이스가 초기화되지 않았습니다.');
-  }
+  const adapter = getDBAdapter();
   
   try {
-    if (!queryClient) {
-      throw new Error('PostgreSQL 쿼리 클라이언트가 초기화되지 않았습니다.');
+    // 트랜잭션 시작
+    await adapter.beginTransaction();
+    
+    try {
+      // 콜백 실행
+      const result = await callback();
+      
+      // 트랜잭션 커밋
+      await adapter.commitTransaction();
+      
+      return result;
+    } catch (error) {
+      // 오류 발생 시 롤백
+      await adapter.rollbackTransaction();
+      throw error;
     }
-    
-    // PostgreSQL 트랜잭션 실행
-    const result = await queryClient.transaction(async () => {
-      // 콜백 실행 및 결과 반환
-      return await callback();
-    });
-    
-    return result;
   } catch (error) {
     throw error;
   }
@@ -238,5 +296,9 @@ export const dbAdapter = {
   
   async delete<R>(table: any, where: SQL<unknown>): Promise<R> {
     return getDBAdapter().delete<R>(table, where);
+  },
+  
+  async query<T>(query: any): Promise<T> {
+    return getDBAdapter().query<T>(query);
   }
 }; 

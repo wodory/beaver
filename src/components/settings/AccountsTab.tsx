@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from "react";
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Plus, Edit2, Trash2, RefreshCw, ExternalLink, Database, Loader2 } from "lucide-react";
+import { Plus, Edit2, Trash2, RefreshCw, ExternalLink, Database, Loader2, Download } from "lucide-react";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useAccounts } from "@/hooks/useAccounts";
 import { AccountDialog, AccountFormData } from "./AccountDialog";
@@ -119,78 +119,35 @@ export function AccountsTab() {
   const handleSaveRepository = async (repoData: RepositoryFormData) => {
     try {
       let success = false;
-      let repoId: number | undefined = undefined;
       
       if (currentRepository) {
         // 저장소 업데이트
-        success = await updateRepository(
-          currentRepository.id, 
-          {
-            ...repoData,
-            type: repoData.type as AccountType
-          }
-        );
+        // ID 타입 변환 처리
+        success = await updateRepository(currentRepository.id, {
+          ...repoData,
+          type: repoData.type as AccountType,
+          id: repoData.id ? parseInt(repoData.id) : undefined
+        });
         if (success) {
           toast.success("저장소가 업데이트되었습니다.");
-          repoId = parseInt(currentRepository.id);
+          // 설정 다시 로드하여 UI 갱신
+          await loadSettings();
         }
       } else {
         // 새 저장소 추가
-        success = await addRepository(
-          {
-            ...repoData,
-            type: repoData.type as AccountType
-          }
-        );
-        
-        // 새로 추가된 저장소의 ID를 얻기 위해 설정을 다시 로드
-        await loadSettings();
-        
-        // 방금 추가한 저장소 찾기
-        if (success && settings?.repositories) {
-          const addedRepo = settings.repositories.find(r => 
-            r.name === repoData.name && 
-            r.url === repoData.url
-          );
-          
-          if (addedRepo) {
-            repoId = parseInt(addedRepo.id);
-            toast.success("새 저장소가 추가되었습니다.");
-          }
+        // 타입 변환 처리
+        success = await addRepository({
+          ...repoData,
+          type: repoData.type as AccountType
+        });
+        if (success) {
+          toast.success("새 저장소가 추가되었습니다.");
+          // 설정 다시 로드하여 UI 갱신
+          await loadSettings();
         }
       }
       
-      if (success && repoId) {
-        // 설정 다시 로드하여 UI 갱신
-        await loadSettings();
-        
-        // 저장소 데이터 자동 동기화 시작
-        try {
-          toast.info(`저장소 데이터 수집을 시작합니다...`, { duration: 3000 });
-          
-          // 저장소 데이터 상태 업데이트 - 로딩 상태로 설정
-          setRepoDataState(prev => ({
-            ...prev,
-            [repoId]: { loading: true, hasData: false }
-          }));
-          
-          // 저장소 동기화 API 호출
-          const response = await fetch(`/api/settings/repositories/${repoId}/sync`, {
-            method: 'POST'
-          });
-          
-          const data = await response.json();
-          
-          if (response.ok && data.success) {
-            toast.success(`저장소 데이터 수집이 시작되었습니다.`);
-          } else {
-            toast.info(`저장소 정보가 저장되었으나, 데이터 수집은 수동으로 시작해야 합니다.`);
-          }
-        } catch (syncError) {
-          console.error('저장소 자동 동기화 시작 중 오류:', syncError);
-          toast.error('저장소 데이터 수집 시작에 실패했습니다. 수동으로 시작해주세요.');
-        }
-      } else if (!success) {
+      if (!success) {
         toast.error("저장소 저장에 실패했습니다.");
       }
     } catch (error) {
@@ -247,12 +204,13 @@ export function AccountsTab() {
   // GitHub 설정에서 계정 및 저장소 로드
   useEffect(() => {
     console.log('[DEBUG] AccountsTab - githubSettings 변경됨:', githubSettings);
-    if (githubSettings) {
-      if (githubSettings.domains) {
-        // 도메인 정보 로드
-        console.log('[DEBUG] AccountsTab - 도메인 정보 로드됨:', githubSettings.domains);
-      }
-    }
+    // 주석 처리: domains 속성이 GitHubSettings 타입에 없음
+    // if (githubSettings) {
+    //   if (githubSettings.domains) {
+    //     // 도메인 정보 로드
+    //     console.log('[DEBUG] AccountsTab - 도메인 정보 로드됨:', githubSettings.domains);
+    //   }
+    // }
   }, [githubSettings]);
 
   // useAccounts hook의 결과 로깅
@@ -266,28 +224,56 @@ export function AccountsTab() {
   const loadRepositoriesWithoutData = async () => {
     try {
       setLoadingWithoutData(true);
-      const response = await fetch('/api/settings/repositories/without-data');
-      const data = await response.json();
+      console.log('[DEBUG] 데이터가 없는 저장소 조회 요청 시작', { activeTab });
       
-      if (data.success && data.repositories) {
+      const response = await fetch(`/api/settings/repositories/without-data?serviceType=${activeTab}`);
+      console.log('[DEBUG] 응답 상태:', response.status, response.statusText);
+      
+      // 응답이 성공적이지 않은 경우 오류 처리
+      if (!response.ok) {
+        // 오류 응답 내용 확인 시도
+        const errorText = await response.text();
+        console.error(`API 응답 오류(${response.status}):`, errorText);
+        throw new Error(`API 요청 실패: ${response.status} ${response.statusText}`);
+      }
+      
+      // 응답 타입 확인 (Content-Type: application/json)
+      const contentType = response.headers.get('content-type');
+      if (!contentType || !contentType.includes('application/json')) {
+        const bodyText = await response.text();
+        console.error('잘못된 응답 형식:', contentType, '\n응답 본문:', bodyText);
+        throw new Error('API가 JSON 형식으로 응답하지 않았습니다: ' + contentType);
+      }
+      
+      const data = await response.json();
+      console.log('[DEBUG] 데이터가 없는 저장소 응답:', data);
+      
+      // 저장소 데이터 상태 업데이트
+      if (data && data.repositories) {
         const newState: RepositoryDataState = {};
         
-        // 모든 저장소는 기본적으로 데이터를 가지고 있다고 가정
-        if (settings?.repositories) {
-          settings.repositories.forEach(repo => {
-            newState[repo.id] = { loading: false, hasData: true };
-          });
-        }
-        
-        // 데이터가 없는 저장소 상태 업데이트
-        data.repositories.forEach((repo: any) => {
-          newState[repo.id] = { loading: false, hasData: false };
+        // 현재 저장소 상태 초기화 (선택된 탭의 저장소만)
+        const filteredRepositories = getRepositoriesByType(activeTab);
+        filteredRepositories.forEach(repo => {
+          newState[repo.id] = { loading: false, hasData: true };
         });
         
-        setRepoDataState(newState);
+        // 데이터가 없는 저장소 상태 설정
+        data.repositories.forEach((repo: any) => {
+          // 현재 활성 탭의 저장소 유형과 일치하는 저장소만 처리
+          if (repo.type === activeTab) {
+            newState[repo.id] = { loading: false, hasData: false };
+          }
+        });
+        
+        setRepoDataState(prev => ({
+          ...prev,
+          ...newState
+        }));
       }
     } catch (error) {
-      console.error('데이터가 없는 저장소 목록 조회 중 오류 발생:', error);
+      console.error('데이터가 없는 저장소 조회 중 오류 발생:', error);
+      toast.error('저장소 데이터 조회 중 오류가 발생했습니다: ' + (error instanceof Error ? error.message : String(error)));
     } finally {
       setLoadingWithoutData(false);
     }
@@ -310,50 +296,85 @@ export function AccountsTab() {
       
       if (response.ok && data.status === 'started') {
         toast.success(`저장소 데이터 수집이 시작되었습니다.`);
-        
-        // 약간의 딜레이 후에 로딩 상태 해제
-        setTimeout(() => {
-          setRepoDataState(prev => ({
-            ...prev,
-            [repoId]: { loading: false, hasData: true }
-          }));
-        }, 2000);
       } else {
-        // GitHub Enterprise VPN 연결 필요 오류 검사
-        if (data.message && data.message.includes('사내망(VPN) 연결이 필요합니다')) {
-          toast.error('GitHub Enterprise 서버에 접근할 수 없습니다. 사내망(VPN) 연결이 필요합니다.', {
-            duration: 5000,
-            action: {
-              label: '확인',
-              onClick: () => console.log('VPN 연결 필요 확인')
-            }
-          });
-        } else {
-          toast.error(`데이터 수집 실패: ${data.message || '알 수 없는 오류'}`);
-        }
-        
+        toast.error(`저장소 데이터 수집 요청 실패: ${data.error || '알 수 없는 오류'}`);
+      }
+    } catch (error) {
+      console.error('저장소 데이터 동기화 요청 중 오류 발생:', error);
+      toast.error('저장소 데이터 동기화 요청 중 오류가 발생했습니다.');
+    } finally {
+      // 로딩 상태 해제
+      setTimeout(() => {
         setRepoDataState(prev => ({
           ...prev,
           [repoId]: { ...prev[repoId], loading: false }
         }));
+      }, 2000);
+    }
+  };
+
+  // 데이터가 없는 모든 저장소 동기화 요청
+  const syncAllRepositoriesWithoutData = async () => {
+    try {
+      setLoadingWithoutData(true);
+      console.log('[DEBUG] 데이터가 없는 모든 저장소 동기화 요청 시작', { activeTab });
+      
+      const response = await fetch('/api/settings/repositories/sync-all-without-data', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ serviceType: activeTab })
+      });
+      
+      console.log('[DEBUG] 응답 상태:', response.status, response.statusText);
+      
+      // 응답이 성공적이지 않은 경우 오류 처리
+      if (!response.ok) {
+        // 오류 응답 내용 확인 시도
+        const errorText = await response.text();
+        console.error(`API 응답 오류(${response.status}):`, errorText);
+        throw new Error(`API 요청 실패: ${response.status} ${response.statusText}`);
+      }
+      
+      // 응답 타입 확인 (Content-Type: application/json)
+      const contentType = response.headers.get('content-type');
+      if (!contentType || !contentType.includes('application/json')) {
+        const bodyText = await response.text();
+        console.error('잘못된 응답 형식:', contentType, '\n응답 본문:', bodyText);
+        throw new Error('API가 JSON 형식으로 응답하지 않았습니다: ' + contentType);
+      }
+      
+      const data = await response.json();
+      console.log('[DEBUG] 데이터가 없는 모든 저장소 동기화 응답:', data);
+      
+      if (response.ok && data.status === 'started') {
+        toast.success(`데이터가 없는 ${data.repositoryIds.length}개 저장소 데이터 수집이 시작되었습니다.`);
+        
+        // 동기화 중인 저장소 상태 업데이트
+        const newState = { ...repoDataState };
+        data.repositoryIds.forEach((repoId: string) => {
+          newState[repoId] = { loading: true, hasData: false };
+        });
+        
+        setRepoDataState(newState);
+        
+        // 5초 후에 상태 업데이트 (로딩 표시 해제)
+        setTimeout(() => {
+          loadRepositoriesWithoutData();
+        }, 5000);
+        
+      } else if (data.status === 'completed') {
+        toast.info(data.message || '모든 저장소에 이미 데이터가 있습니다.');
+      } else {
+        console.warn('예상치 못한 API 응답:', data);
+        toast.error(`저장소 데이터 수집 요청 실패: ${data.error || '알 수 없는 오류'}`);
       }
     } catch (error) {
-      console.error('저장소 데이터 동기화 중 오류 발생:', error);
-      
-      // 오류 메시지에서 VPN 연결 필요 문구 체크
-      const errorMessage = error instanceof Error ? error.message : String(error);
-      if (errorMessage.includes('사내망(VPN)') || errorMessage.includes('Enterprise 서버')) {
-        toast.error('GitHub Enterprise 서버에 접근할 수 없습니다. 사내망(VPN) 연결이 필요합니다.', {
-          duration: 5000
-        });
-      } else {
-        toast.error('저장소 데이터 동기화 중 오류가 발생했습니다.');
-      }
-      
-      setRepoDataState(prev => ({
-        ...prev,
-        [repoId]: { ...prev[repoId], loading: false }
-      }));
+      console.error('데이터가 없는 저장소 동기화 요청 중 오류 발생:', error);
+      toast.error('저장소 데이터 동기화 요청 중 오류가 발생했습니다: ' + (error instanceof Error ? error.message : String(error)));
+    } finally {
+      setLoadingWithoutData(false);
     }
   };
 
@@ -363,71 +384,6 @@ export function AccountsTab() {
       loadRepositoriesWithoutData();
     }
   }, [settings]);
-  
-  // 데이터가 없는 저장소를 자동으로 확인하고 사용자에게 알림
-  useEffect(() => {
-    const reposWithoutData = Object.entries(repoDataState)
-      .filter(([_, state]) => state && !state.loading && !state.hasData)
-      .map(([id]) => id);
-    
-    if (reposWithoutData.length > 0) {
-      // 데이터가 없는 저장소 정보 찾기
-      const repoNames = reposWithoutData.map(id => {
-        const repo = settings?.repositories.find(r => r.id === id);
-        return repo ? repo.fullName || repo.name : `저장소 ID: ${id}`;
-      }).join(', ');
-      
-      // 사용자에게 알림으로 표시
-      toast.info(
-        `${reposWithoutData.length}개의 저장소에 데이터가 없습니다: ${repoNames}. 데이터 수집을 시작하시겠습니까?`,
-        {
-          duration: 10000,
-          action: {
-            label: '데이터 수집 시작',
-            onClick: () => {
-              // 모든 데이터 없는 저장소의 데이터 수집 시작
-              reposWithoutData.forEach(id => {
-                syncRepositoryData(id);
-              });
-              toast.success('데이터 수집이 시작되었습니다.');
-            }
-          }
-        }
-      );
-    }
-  }, [repoDataState, settings]);
-
-  // 모든 데이터 없는 저장소의 데이터 수집 시작
-  const syncAllWithoutData = async () => {
-    try {
-      // API 호출 시작
-      const response = await fetch('/api/settings/repositories/sync-all-without-data', {
-        method: 'POST'
-      });
-      
-      const data = await response.json();
-      
-      if (response.ok && data.success) {
-        if (data.repositories && data.repositories.length > 0) {
-          // 동기화 시작된 저장소 상태 업데이트
-          const newState = { ...repoDataState };
-          data.repositories.forEach((repo: any) => {
-            newState[repo.id] = { loading: true, hasData: false };
-          });
-          setRepoDataState(newState);
-          
-          toast.success(data.message);
-        } else {
-          toast.info(data.message);
-        }
-      } else {
-        toast.error(`동기화 요청 실패: ${data.message || '알 수 없는 오류'}`);
-      }
-    } catch (error) {
-      console.error('모든 저장소 동기화 요청 중 오류 발생:', error);
-      toast.error('저장소 동기화 요청 중 오류가 발생했습니다.');
-    }
-  };
 
   if (loading) {
     console.log('[DEBUG] AccountsTab - 로딩 중 상태 표시');
@@ -490,56 +446,41 @@ export function AccountsTab() {
             <CardContent>
               {filteredAccounts.length > 0 ? (
                 <div className="space-y-4">
-                  {filteredAccounts.map((account) => (
+                  {filteredAccounts.map(account => (
                     <div key={account.id} className="border rounded-md p-4">
                       <div className="flex justify-between items-start">
                         <div>
-                          <h3 className="text-lg font-medium">{account.name || account.username}</h3>
-                          <p className="text-sm text-gray-500">
-                            {account.type === 'github' ? 'GitHub' : account.type === 'github-enterprise' ? 'GitHub Enterprise' : '기타'} 계정
-                            {account.apiUrl && <span> ({account.apiUrl})</span>}
-                          </p>
+                          <h3 className="font-medium text-lg">{account.username}</h3>
+                          <p className="text-sm text-muted-foreground">ID: {account.id}</p>
                         </div>
-                        
-                        <div className="flex space-x-2">
-                          <Button variant="outline" size="sm" onClick={() => {
-                            setCurrentAccount(account);
-                            setShowAccountDialog(true);
-                          }}>
-                            <Edit2 className="mr-2 h-4 w-4" />
-                            수정
-                          </Button>
+                        <div className="flex gap-2">
                           <Button 
                             variant="outline" 
-                            size="sm" 
-                            className="text-red-500 hover:text-red-700 hover:bg-red-50 dark:hover:bg-red-950" 
+                            size="sm"
+                            onClick={() => {
+                              setCurrentAccount(account);
+                              setShowAccountDialog(true);
+                            }}
+                          >
+                            <Edit2 className="h-4 w-4 mr-1" /> 수정
+                          </Button>
+                          <Button 
+                            variant="destructive" 
+                            size="sm"
                             onClick={() => handleDeleteAccount(account)}
                           >
-                            <Trash2 className="mr-2 h-4 w-4" />
-                            삭제
+                            <Trash2 className="h-4 w-4 mr-1" /> 삭제
                           </Button>
                         </div>
                       </div>
-                      
-                      <div className="mt-4">
-                        <div className="flex justify-between items-center mb-3">
-                          <h4 className="font-medium">저장소 관리</h4>
-                          <div className="flex space-x-2">
-                            {Object.values(repoDataState).some(state => !state.hasData) && (
-                              <Button variant="outline" size="sm" onClick={syncAllWithoutData}>
-                                <Database className="mr-2 h-4 w-4" />
-                                모든 저장소 데이터 수집
-                              </Button>
-                            )}
-                            <Button size="sm" onClick={() => {
-                              setCurrentRepository(undefined);
-                              setShowRepositoryDialog(true);
-                            }}>
-                              <Plus className="mr-2 h-4 w-4" />
-                              저장소 추가
-                            </Button>
-                          </div>
-                        </div>
+                      <div className="grid grid-cols-2 gap-2 mt-2 text-sm">
+                        <div><span className="font-medium">URL:</span> {account.url}</div>
+                        <div><span className="font-medium">API URL:</span> {account.apiUrl}</div>
+                        <div><span className="font-medium">이메일:</span> {account.email}</div>
+                        <div><span className="font-medium">회사:</span> {account.company}</div>
+                        {account.org && (
+                          <div><span className="font-medium">조직:</span> {account.org}</div>
+                        )}
                       </div>
                     </div>
                   ))}
@@ -586,6 +527,18 @@ export function AccountsTab() {
                     <RefreshCw className="h-4 w-4 mr-2" />
                   )}
                   상태 확인
+                </Button>
+                <Button
+                  variant="secondary"
+                  onClick={syncAllRepositoriesWithoutData}
+                  disabled={loadingWithoutData}
+                >
+                  {loadingWithoutData ? (
+                    <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                  ) : (
+                    <Download className="h-4 w-4 mr-2" />
+                  )}
+                  데이터가 없는 모든 저장소 동기화
                 </Button>
                 <Button 
                   onClick={() => {

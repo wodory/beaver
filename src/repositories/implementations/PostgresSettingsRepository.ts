@@ -1,5 +1,5 @@
 import { SettingsRepository } from '../interfaces/SettingsRepository';
-import { getDB } from '../../db/index.js';
+import { getDB } from '../../db/index';
 
 export class PostgresSettingsRepository implements SettingsRepository {
   async getSettings(userId: string, type: string): Promise<any> {

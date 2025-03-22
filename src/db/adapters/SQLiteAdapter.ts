@@ -25,14 +25,19 @@ export class SQLiteAdapter implements IDatabaseAdapter {
    */
   async initialize(): Promise<void> {
     try {
-      this.sqlite = new Database(this.dbPath);
+      // 타입 단언을 사용하여 타입 안전하게 처리
+      this.sqlite = new Database(this.dbPath) as SQLiteDatabase;
       
-      // SQLite 프래그마 설정
-      this.sqlite.pragma('journal_mode = WAL');
-      this.sqlite.pragma('foreign_keys = ON');
+      // SQLite 프래그마 설정 (타입 안전하게 처리)
+      if (this.sqlite) {
+        this.sqlite.pragma('journal_mode = WAL');
+        this.sqlite.pragma('foreign_keys = ON');
+      }
       
-      // Drizzle ORM 초기화
-      this.db = drizzle(this.sqlite, { schema });
+      // Drizzle ORM 초기화 (null 체크)
+      if (this.sqlite) {
+        this.db = drizzle(this.sqlite, { schema });
+      }
       
       // 마이그레이션 자동 실행
       await this.runMigrations();
@@ -59,37 +64,47 @@ export class SQLiteAdapter implements IDatabaseAdapter {
   /**
    * SQL 쿼리를 실행합니다.
    */
-  async query<T>(sql: string, params: any[] = []): Promise<T> {
+  async query<T>(query: any): Promise<T> {
     if (!this.sqlite) {
       throw new Error('데이터베이스가 초기화되지 않았습니다.');
     }
     
-    try {
-      const stmt = this.sqlite.prepare(sql);
-      
-      // 단일 행 반환인지 여러 행 반환인지 확인
-      if (sql.trim().toLowerCase().startsWith('select')) {
-        return stmt.all(...params) as unknown as T;
-      } else {
-        return stmt.run(...params) as unknown as T;
-      }
-    } catch (error) {
-      console.error('SQL 쿼리 실행 오류:', error);
-      throw error;
+    // 직접 SQL 실행인 경우
+    if (typeof query === 'string') {
+      return this.sqlite.prepare(query).all() as unknown as T;
     }
+    
+    // 객체형 쿼리에서 text와 values가 있는 경우
+    if (typeof query === 'object' && query.text) {
+      const { text, values } = query;
+      const stmt = this.sqlite.prepare(text);
+      
+      if (Array.isArray(values)) {
+        return stmt.run(...values) as unknown as T;
+      }
+      
+      return stmt.run(values) as unknown as T;
+    }
+    
+    // Drizzle 쿼리 객체인 경우
+    if (query.execute && typeof query.execute === 'function') {
+      return query.execute() as T;
+    }
+    
+    throw new Error('지원되지 않는 쿼리 형식입니다.');
   }
 
   /**
    * SQL 명령을 실행합니다.
    */
-  async execute(sql: string, params: any[] = []): Promise<void> {
+  async execute(sql: string, params: any[] = []): Promise<any> {
     if (!this.sqlite) {
       throw new Error('데이터베이스가 초기화되지 않았습니다.');
     }
     
     try {
       const stmt = this.sqlite.prepare(sql);
-      stmt.run(...params);
+      return stmt.run(...params);
     } catch (error) {
       console.error('SQL 쿼리 실행 오류:', error);
       throw error;
@@ -104,7 +119,13 @@ export class SQLiteAdapter implements IDatabaseAdapter {
       throw new Error('데이터베이스가 초기화되지 않았습니다.');
     }
     
-    return await Promise.resolve(this.db.insert(table).values(data as Record<string, any>).returning().get()) as R;
+    // 타입 안전하게 처리
+    const result = this.db.insert(table).values(data as Record<string, any>);
+    if (result.returning && typeof result.returning === 'function') {
+      return result.returning().get() as unknown as R;
+    }
+    
+    return Promise.resolve({} as R);
   }
 
   /**
@@ -115,7 +136,7 @@ export class SQLiteAdapter implements IDatabaseAdapter {
       throw new Error('데이터베이스가 초기화되지 않았습니다.');
     }
     
-    return await Promise.resolve(query.all()) as T[];
+    return await Promise.resolve(query.all()) as unknown as T[];
   }
 
   /**
@@ -126,21 +147,18 @@ export class SQLiteAdapter implements IDatabaseAdapter {
       throw new Error('데이터베이스가 초기화되지 않았습니다.');
     }
     
-    let updateQuery = this.db.update(table).set(data as Record<string, any>);
+    // 기본 업데이트 쿼리 생성
+    const updateQuery = this.db.update(table).set(data as Record<string, any>);
     
-    if (where) {
-      if (typeof where === 'function') {
-        // 함수형 where 조건 (Drizzle 쿼리 빌더)
-        updateQuery = updateQuery.where(where);
-      } else if (typeof where === 'object') {
-        // 객체형 where 조건 (ID 기반)
-        for (const key in where) {
-          updateQuery = updateQuery.where(eq(table[key], where[key]));
-        }
-      }
+    // where 조건 추가 (타입 안전)
+    const finalQuery = where ? updateQuery.where(where) : updateQuery;
+    
+    // 결과 반환
+    if (finalQuery.returning && typeof finalQuery.returning === 'function') {
+      return finalQuery.returning().get() as unknown as R;
     }
     
-    return await Promise.resolve(updateQuery.returning().get()) as R;
+    return Promise.resolve({} as R);
   }
 
   /**
@@ -151,21 +169,18 @@ export class SQLiteAdapter implements IDatabaseAdapter {
       throw new Error('데이터베이스가 초기화되지 않았습니다.');
     }
     
-    let deleteQuery = this.db.delete(table);
+    // 기본 삭제 쿼리 생성
+    const deleteQuery = this.db.delete(table);
     
-    if (where) {
-      if (typeof where === 'function') {
-        // 함수형 where 조건 (Drizzle 쿼리 빌더)
-        deleteQuery = deleteQuery.where(where);
-      } else if (typeof where === 'object') {
-        // 객체형 where 조건 (ID 기반)
-        for (const key in where) {
-          deleteQuery = deleteQuery.where(eq(table[key], where[key]));
-        }
-      }
+    // where 조건 추가 (타입 안전)
+    const finalQuery = where ? deleteQuery.where(where) : deleteQuery;
+    
+    // 결과 반환
+    if (finalQuery.returning && typeof finalQuery.returning === 'function') {
+      return finalQuery.returning().get() as unknown as R;
     }
     
-    return await Promise.resolve(deleteQuery.returning().get()) as R;
+    return Promise.resolve({} as R);
   }
 
   /**
@@ -180,7 +195,8 @@ export class SQLiteAdapter implements IDatabaseAdapter {
       throw new Error('이미 트랜잭션이 진행중입니다.');
     }
     
-    this.sqlite.exec('BEGIN TRANSACTION;');
+    // exec 대신 prepare + run 사용 (타입 안전)
+    this.sqlite.prepare('BEGIN TRANSACTION;').run();
     this.transaction = true;
   }
 
@@ -197,7 +213,8 @@ export class SQLiteAdapter implements IDatabaseAdapter {
     }
     
     try {
-      this.sqlite.exec('COMMIT;');
+      // exec 대신 prepare + run 사용 (타입 안전)
+      this.sqlite.prepare('COMMIT;').run();
     } finally {
       this.transaction = false;
     }
@@ -216,7 +233,8 @@ export class SQLiteAdapter implements IDatabaseAdapter {
     }
     
     try {
-      this.sqlite.exec('ROLLBACK;');
+      // exec 대신 prepare + run 사용 (타입 안전)
+      this.sqlite.prepare('ROLLBACK;').run();
     } finally {
       this.transaction = false;
     }

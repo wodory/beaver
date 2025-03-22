@@ -4,7 +4,7 @@
  * 데이터베이스에서 설정 정보를 가져오고 저장하는 서비스입니다.
  */
 import { UserSettings, GitHubSettings, GitHubEnterpriseSettings, JiraSettings, DomainSettings, AccountsSettings } from '../../types/settings.js';
-import { getDB, DB_TYPE } from '../../db/index.js';
+import { getDB, DB_TYPE, getDBAdapter } from '../../db/index.js';
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
@@ -42,16 +42,17 @@ export class SettingsService {
   async getUserSettings(userId: number = DEFAULT_USER_ID): Promise<UserSettings> {
     try {
       const db = getDB();
+      const dbAdapter = getDBAdapter();
       
       // 실제 SQL 쿼리 실행 (Drizzle은 type safe query builder이지만, 
       // 여기서는 단순화를 위해 직접 SQL을 사용합니다)
       let result;
       
       if (DB_TYPE === 'postgresql') {
-        // PostgreSQL - unsafe 메서드를 사용하여 raw 쿼리 실행
+        // PostgreSQL - 어댑터 쿼리 메소드 사용
         const query = `SELECT "data" FROM "settings" WHERE "type" = 'user' AND "user_id" = ${userId} LIMIT 1`;
         console.log('[DEBUG] 실행할 사용자 설정 쿼리:', query);
-        result = await db.unsafe(query);
+        result = await dbAdapter.query(query);
       } else {
         result = await db.execute(`
           SELECT data FROM settings 
@@ -103,6 +104,7 @@ export class SettingsService {
   async updateUserSettings(settings: Partial<UserSettings>, userId: number = DEFAULT_USER_ID): Promise<boolean> {
     try {
       const db = getDB();
+      const dbAdapter = getDBAdapter();
       
       // 현재 설정 조회
       const currentSettings = await this.getUserSettings(userId);
@@ -116,7 +118,7 @@ export class SettingsService {
       if (DB_TYPE === 'postgresql') {
         const checkQuery = `SELECT "id" FROM "settings" WHERE "type" = 'user' AND "user_id" = ${userId} LIMIT 1`;
         console.log('[DEBUG] 실행할 사용자 설정 확인 쿼리:', checkQuery);
-        checkResult = await db.unsafe(checkQuery);
+        checkResult = await dbAdapter.query(checkQuery);
       } else {
         checkResult = await db.execute(`
           SELECT id FROM settings 
@@ -140,7 +142,7 @@ export class SettingsService {
             WHERE "type" = 'user' AND "user_id" = ${userId}
           `;
           console.log('[DEBUG] 실행할 사용자 설정 업데이트 쿼리 (데이터 길이):', updateQuery.length);
-          await db.unsafe(updateQuery);
+          await dbAdapter.query(updateQuery);
         } else {
           await db.execute(`
             UPDATE settings 
@@ -159,7 +161,7 @@ export class SettingsService {
             VALUES ('user', ${userId}, '${escapedJsonData}'::jsonb, NOW(), NOW())
           `;
           console.log('[DEBUG] 실행할 사용자 설정 삽입 쿼리 (데이터 길이):', insertQuery.length);
-          await db.unsafe(insertQuery);
+          await dbAdapter.query(insertQuery);
         } else {
           await db.execute(`
             INSERT INTO settings (type, user_id, data, created_at, updated_at) 

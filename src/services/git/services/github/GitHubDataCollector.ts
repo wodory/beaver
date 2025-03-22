@@ -53,8 +53,6 @@ export class GitHubDataCollector {
    * @param baseUrl GitHub API 기본 URL (기본값: https://api.github.com)
    */
   constructor(
-    // settingsRepository는 사용되지 않지만 인터페이스 호환성을 위해 유지
-    // @ts-ignore: 인터페이스 호환성을 위해 필요하지만 사용되지 않는 매개변수
     private settingsRepository: SettingsRepository,
     private repositoryInfoRepository: RepositoryInfoRepository,
     repositoryId: number, 
@@ -203,8 +201,7 @@ export class GitHubDataCollector {
    */
   async collectCommits(): Promise<number> {
     try {
-      // 저장소 정보 조회 (사용되지 않는 destructuring 제거)
-      await this.getRepositoryInfo();
+      const { repository } = await this.getRepositoryInfo();
       
       // 기존 DB에서 저장소 정보를 직접 조회하여 lastSyncAt 정보 가져오기
       const repoFromDb = await this.db.query.repositories.findFirst({
@@ -577,8 +574,8 @@ export class GitHubDataCollector {
     reviewCount: number;
   }> {
     try {
-      // 저장소 정보 조회 (사용되지 않는 destructuring 제거)
-      await this.getRepositoryInfo();
+      // 저장소 정보 조회
+      const { repository } = await this.getRepositoryInfo();
       
       // 기존 DB에서 저장소 정보를 직접 조회하여 lastSyncAt 정보 가져오기
       const repoFromDb = await this.db.query.repositories.findFirst({

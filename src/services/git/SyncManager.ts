@@ -5,10 +5,7 @@ import { eq } from 'drizzle-orm';
 import { GitHubApiCollector, GitHubApiSettings } from '../github/GitHubApiCollector.js';
 import { logger } from '../../utils/logger.js';
 import { SettingsService } from '../../api/server/settings-service.js';
-import { GitHubDataCollector } from './services/github/GitHubDataCollector.js';
 import { sql } from 'drizzle-orm';
-import { PostgresSettingsRepository } from '../../repositories/implementations/PostgresSettingsRepository.js';
-import { PostgresRepositoryInfoRepository } from '../../repositories/implementations/PostgresRepositoryInfoRepository.js';
 
 /**
  * 시스템 설정 인터페이스
@@ -360,17 +357,10 @@ export class SyncManager {
       // 4. 데이터 수집기 초기화
       logger.info(`저장소 [${repoInfo.fullName}] 데이터 수집기 초기화 - API Token: ${apiToken ? '설정됨' : '없음'}, API URL: ${apiUrl || 'default'}`);
       
-      // 데이터 액세스 레포지토리 생성
-      const settingsRepository = new PostgresSettingsRepository();
-      const repositoryInfoRepository = new PostgresRepositoryInfoRepository();
+      const { GitHubDataCollector } = await import('./services/github/GitHubDataCollector.js');
       
-      const collector = new GitHubDataCollector(
-        settingsRepository,
-        repositoryInfoRepository,
-        repoId, 
-        apiToken, 
-        apiUrl
-      );
+      // 정적 팩토리 메서드를 사용하여 데이터 수집기 초기화
+      const collector = await GitHubDataCollector.createForRepository(repoId);
       
       // 5. 데이터 동기화 실행
       logger.info(`저장소 [${repoInfo.fullName}] 데이터 수집 시작`);
