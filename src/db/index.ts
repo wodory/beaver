@@ -1,12 +1,14 @@
+// 실제 사용되는 PostgreSQL 라이브러리 임포트 복원
 import { drizzle } from 'drizzle-orm/postgres-js';
 import { migrate } from 'drizzle-orm/postgres-js/migrator';
 import postgres from 'postgres';
 import * as schema from './schema/index.js';
+import * as schemaSQLite from './schema-sqlite/index.js';
+
 // SQLite 관련 import
 import { drizzle as drizzleSQLite } from 'drizzle-orm/better-sqlite3';
 import { migrate as migrateSQLite } from 'drizzle-orm/better-sqlite3/migrator';
 import Database from 'better-sqlite3';
-import * as schemaSQLite from './schema-sqlite/index.js';
 
 // DB 어댑터 import
 import { NeonDBAdapter } from './adapters/NeonDBAdapter.js';
@@ -186,14 +188,22 @@ async function initializePostgresDatabase() {
   DB_CONNECTION = process.env.DATABASE_URL || 'postgresql://localhost:5432/github_metrics';
   console.log('Using PostgreSQL database with connection string:', DB_CONNECTION);
   
+  // Postgres 클라이언트 설정 - prepare:false로 변경 (트랜잭션 풀 모드에서는 prepared statements가 지원되지 않음)
+  queryClient = postgres(DB_CONNECTION, {
+    ssl: 'require',
+    max: 10, // 연결 풀 최대 크기
+    idle_timeout: 30, // 유휴 연결 타임아웃 (초)
+    prepare: false // prepared statements 비활성화
+  });
+  
+  // Drizzle ORM 인스턴스 생성 - 단순화된 설정
+  db = drizzle(queryClient, { schema });
+  
   // 팩토리를 통해 PostgreSQL 어댑터 생성
   dbAdapterInstance = databaseAdapterFactory.createAdapter(DB_TYPES.POSTGRESQL, DB_CONNECTION);
   
   // 어댑터 초기화
   await dbAdapterInstance.initialize();
-  
-  // Drizzle ORM 인스턴스 설정
-  db = dbAdapterInstance.db;
   
   // 마이그레이션 실행
   try {

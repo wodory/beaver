@@ -1,8 +1,8 @@
-import { Repository } from '../../types/settings';
-import { RepositoryInfoRepository } from '../interfaces/RepositoryInfoRepository';
-import { getDB } from '../../db/index';
+import { Repository } from '../../types/settings.js';
+import { RepositoryInfoRepository } from '../interfaces/RepositoryInfoRepository.js';
+import { getDB } from '../../db/index.js';
 import { eq } from 'drizzle-orm';
-import { repositories } from '../../db/schema/index';
+import { repositories } from '../../db/schema/index.js';
 
 export class PostgresRepositoryInfoRepository implements RepositoryInfoRepository {
   async findById(id: number): Promise<Repository | null> {

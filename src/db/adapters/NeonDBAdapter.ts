@@ -36,6 +36,7 @@ export class NeonDBAdapter implements IDatabaseAdapter {
         max: 1,              // Neon 프리티어 권장 값
         idle_timeout: 20,    // Neon 권장 값
         connect_timeout: 30, // 연결 타임아웃 (초)
+        prepare: false       // prepared statements 비활성화
       });
       
       // Drizzle ORM 초기화
